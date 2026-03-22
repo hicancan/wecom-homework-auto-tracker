@@ -1,0 +1,6 @@
+students_merged_*.json
+__pycache__/
+.env
+.DS_Store
+out/
+.venv/

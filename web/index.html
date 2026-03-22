@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>算法分析作业实时雷达图</title>
+    <!-- 暗黑/赛博朋克风格极致 UI 基础框架 -->
+    <style>
+        body {
+            background-color: #0d1117;
+            color: #c9d1d9;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 { color: #58a6ff; margin-bottom: 5px; text-shadow: 0 0 10px rgba(88, 166, 255, 0.4); }
+        .subtitle { color: #8b949e; font-size: 0.9em; margin-bottom: 30px; }
+        
+        .container {
+            width: 100%;
+            max-width: 1200px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+            backdrop-filter: blur(10px);
+        }
+
+        /* Chart container */
+        #main-chart { width: 100%; height: 400px; }
+        
+        /* Lists */
+        .list-title { border-bottom: 1px solid #30363d; padding-bottom: 10px; margin-top: 0; color: #ff7b72; }
+        .student-chip {
+            display: inline-block;
+            background: rgba(255, 123, 114, 0.1);
+            color: #ff7b72;
+            border: 1px solid #ff7b72;
+            padding: 4px 12px;
+            border-radius: 20px;
+            margin: 4px;
+            font-size: 0.85em;
+        }
+        .student-chip.submitted {
+            background: rgba(46, 160, 67, 0.1);
+            color: #2ea043;
+            border-color: #2ea043;
+        }
+    </style>
+    <!-- 引入 ECharts -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+</head>
+<body>
+
+    <h1>算法分析与设计作业雷达</h1>
+    <div class="subtitle" id="update-time">最后更新抓取时间: 加载中...</div>
+
+    <div class="container">
+        <!-- 柱状饼图区 -->
+        <div class="card" style="grid-column: 1 / -1;">
+            <div id="main-chart"></div>
+        </div>
+
+        <!-- 催收大字报区 -->
+        <div class="card">
+            <h3 class="list-title">🚨 高危催收名单 (未交)</h3>
+            <div id="missing-list"></div>
+        </div>
+
+        <div class="card">
+            <h3 class="list-title" style="color: #2ea043; border-color: #30363d;">✅ 稳妥名单 (已交)</h3>
+            <div id="submitted-list"></div>
+        </div>
+    </div>
+
+    <script>
+        // 自动解析静态生成的 data.json
+        fetch('./data.json')
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('update-time').innerText = "最后更新抓取时间: " + data.last_updated;
+
+                const classes = ['B240401', 'B240402', 'B240403'];
+                const submittedCounts = [];
+                const missingCounts = [];
+                
+                let htmlMissing = '';
+                let htmlSubmitted = '';
+
+                classes.forEach(c => {
+                    const cls_data = data.classes[c];
+                    submittedCounts.push(cls_data.submitted.length);
+                    missingCounts.push(cls_data.missing.length);
+
+                    // 填充名单
+                    cls_data.missing.forEach(s => {
+                        htmlMissing += `<span class="student-chip">${c} - ${s.name}</span>`;
+                    });
+                    cls_data.submitted.forEach(s => {
+                        htmlSubmitted += `<span class="student-chip submitted">${c} - ${s.name}</span>`;
+                    });
+                });
+
+                document.getElementById('missing-list').innerHTML = htmlMissing || '<span style="color: #2ea043">太棒了，全部收齐！</span>';
+                document.getElementById('submitted-list').innerHTML = htmlSubmitted || '<span style="color: #8b949e">暂无数据加载。</span>';
+
+                // 实例化 ECharts
+                const myChart = echarts.init(document.getElementById('main-chart'), 'dark');
+                const option = {
+                    backgroundColor: 'transparent',
+                    title: { text: '各班上交率对比', textStyle: { color: '#c9d1d9' } },
+                    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+                    legend: { data: ['已提交 (Submitted)', '未交 (Missing)'], textStyle: { color: '#8b949e'} },
+                    xAxis: { type: 'category', data: classes },
+                    yAxis: { type: 'value' },
+                    series: [
+                        {
+                            name: '已提交 (Submitted)',
+                            type: 'bar',
+                            stack: 'total',
+                            itemStyle: { color: '#2ea043' }, /* GitHub success green */
+                            data: submittedCounts
+                        },
+                        {
+                            name: '未交 (Missing)',
+                            type: 'bar',
+                            stack: 'total',
+                            itemStyle: { color: '#d73a49' }, /* GitHub danger red */
+                            data: missingCounts
+                        }
+                    ]
+                };
+                myChart.setOption(option);
+            })
+            .catch(err => {
+                console.error(err);
+                document.getElementById('update-time').innerText = "加载数据失败，请确保 GitHub Actions 已成功运行并输出了 data.json！";
+            });
+    </script>
+</body>
+</html>
