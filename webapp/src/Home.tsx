@@ -122,7 +122,7 @@ function Home() {
           {courses.map((item) => (
             <Link
               key={item.课程}
-              to={`/course/${encodeURIComponent(item.课程)}`}
+              to={`/course/${item.课程}`}
               className="group rounded-2xl border border-sky-100 bg-white/95 p-5 shadow-[0_20px_45px_rgba(14,165,233,0.1)] transition hover:-translate-y-0.5 hover:shadow-[0_25px_50px_rgba(14,165,233,0.16)]"
             >
               <p className="text-xs uppercase tracking-[0.24em] text-sky-700">Course</p>

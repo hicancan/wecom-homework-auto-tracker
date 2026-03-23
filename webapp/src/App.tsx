@@ -59,6 +59,14 @@ function extractStudentNo(raw: string): string {
   return match ? match[1] : text
 }
 
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
 type DonutProps = {
   rate: number
   size?: number
@@ -194,8 +202,8 @@ function App() {
   const navigate = useNavigate()
   const { courseName = '' } = useParams()
   const [searchParams] = useSearchParams()
-  const routeCourse = courseName
-  const routeHomework = searchParams.get('hw') || ''
+  const routeCourse = safeDecodeURIComponent(courseName)
+  const routeHomework = safeDecodeURIComponent(searchParams.get('hw') || '')
   const publicBase = import.meta.env.BASE_URL || '/'
 
   const [indexData, setIndexData] = useState<CourseIndex | null>(null)
@@ -295,7 +303,7 @@ function App() {
     // Only sync URL after the selected course data is loaded,
     // so we don't carry a stale homework key across course switches.
     if (!selectedCourse || routeError || !courseData || courseData.课程 !== selectedCourse) return
-    const nextPathname = `/course/${encodeURIComponent(selectedCourse)}`
+    const nextPathname = `/course/${selectedCourse}`
     const nextSearchParams = new URLSearchParams()
     if (selectedKey) {
       nextSearchParams.set('hw', selectedKey)
@@ -430,7 +438,7 @@ function App() {
                   // Reset stale homework state before route switch.
                   setRouteError('')
                   setSelectedKey('')
-                  navigate({ pathname: `/course/${encodeURIComponent(nextCourse)}`, search: '' }, { replace: false })
+                  navigate({ pathname: `/course/${nextCourse}`, search: '' }, { replace: false })
                 }}
                 disabled={!courseList.length}
               >
@@ -452,8 +460,12 @@ function App() {
                 value={selectedKey}
                 onChange={(e) => {
                   const nextHw = e.target.value
-                  const nextSearch = nextHw ? `?hw=${encodeURIComponent(nextHw)}` : ''
-                  navigate({ pathname: `/course/${encodeURIComponent(selectedCourse)}`, search: nextSearch }, { replace: false })
+                  const nextSearchParams = new URLSearchParams()
+                  if (nextHw) {
+                    nextSearchParams.set('hw', nextHw)
+                  }
+                  const nextSearch = nextSearchParams.toString()
+                  navigate({ pathname: `/course/${selectedCourse}`, search: nextSearch ? `?${nextSearch}` : '' }, { replace: false })
                 }}
                 disabled={!homeworkKeys.length || !canInteract}
               >
