@@ -67,6 +67,10 @@ function safeDecodeURIComponent(value: string): string {
   }
 }
 
+function buildCoursePath(courseName: string): string {
+  return `/course/${encodeURIComponent(courseName)}`
+}
+
 type DonutProps = {
   rate: number
   size?: number
@@ -208,11 +212,10 @@ function App() {
 
   const [indexData, setIndexData] = useState<CourseIndex | null>(null)
   const [courseData, setCourseData] = useState<CourseData | null>(null)
-  const [selectedCourse, setSelectedCourse] = useState('')
   const [selectedKey, setSelectedKey] = useState('')
   const [shareFeedback, setShareFeedback] = useState('')
-  const [routeError, setRouteError] = useState('')
-  const [error, setError] = useState('')
+  const [indexError, setIndexError] = useState('')
+  const [courseError, setCourseError] = useState('')
 
   useEffect(() => {
     if (!shareFeedback) return
@@ -232,43 +235,45 @@ function App() {
         if (!(json.课程列表 || []).length) {
           throw new Error('courses.json 中没有可用课程数据')
         }
-        setError('')
+        setIndexError('')
         setIndexData(json)
       })
       .catch((e: unknown) => {
-        setError(e instanceof Error ? e.message : '加载失败')
+        setIndexData(null)
+        setIndexError(e instanceof Error ? e.message : '加载失败')
       })
   }, [publicBase])
 
+  const courseMap = useMemo(() => {
+    const map = new Map<string, CourseItem>()
+    for (const item of indexData?.课程列表 || []) {
+      map.set(item.课程, item)
+    }
+    return map
+  }, [indexData])
+
+  const selectedCourse = useMemo(() => {
+    if (!indexData || !routeCourse || !courseMap.has(routeCourse)) return ''
+    return routeCourse
+  }, [courseMap, indexData, routeCourse])
+
   useEffect(() => {
-    if (!indexData) return
-    if (!routeCourse) {
-      setRouteError('路由缺少课程参数，请使用分享链接进入。')
-      setSelectedCourse('')
+    if (!selectedCourse) {
       setCourseData(null)
       setSelectedKey('')
+      setCourseError('')
       return
     }
 
-    const hasRouteCourse = (indexData.课程列表 || []).some((item) => item.课程 === routeCourse)
-    if (!hasRouteCourse) {
-      setRouteError(`课程参数无效：${routeCourse}`)
-      setSelectedCourse('')
-      setCourseData(null)
-      setSelectedKey('')
-      return
-    }
-
-    setRouteError('')
-    setSelectedCourse(routeCourse)
-  }, [indexData, routeCourse, selectedCourse])
-
-  useEffect(() => {
-    if (!indexData || !selectedCourse || routeError) return
-    const item = (indexData.课程列表 || []).find((c) => c.课程 === selectedCourse)
+    const item = courseMap.get(selectedCourse)
     if (!item) return
 
-    fetch(`${publicBase}${item.数据文件}`)
+    const controller = new AbortController()
+    setCourseData(null)
+    setSelectedKey('')
+    setCourseError('')
+
+    fetch(`${publicBase}${item.数据文件}`, { signal: controller.signal })
       .then((res) => {
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`)
@@ -276,34 +281,33 @@ function App() {
         return res.json() as Promise<CourseData>
       })
       .then((json) => {
+        if (controller.signal.aborted) return
         const keys = Object.keys(json.作业统计 || {}).sort(
           (a, b) => parseHomeworkOrder(a) - parseHomeworkOrder(b),
         )
-        if (routeHomework && !keys.includes(routeHomework)) {
-          setRouteError(`作业参数无效：${routeHomework}`)
-          setCourseData(json)
-          setSelectedKey('')
-          return
-        }
-
-        const initialHomework = routeHomework || (keys.length ? keys[keys.length - 1] : '')
-        setError('')
-        setRouteError('')
         setCourseData(json)
-        setSelectedKey(initialHomework)
+        setSelectedKey(keys.length ? keys[keys.length - 1] : '')
       })
       .catch((e: unknown) => {
+        if (controller.signal.aborted) return
         setCourseData(null)
         setSelectedKey('')
-        setError(e instanceof Error ? e.message : '课程数据加载失败')
+        setCourseError(e instanceof Error ? e.message : '课程数据加载失败')
       })
-  }, [indexData, publicBase, routeError, routeHomework, selectedCourse])
+
+    return () => controller.abort()
+  }, [courseMap, publicBase, selectedCourse])
 
   useEffect(() => {
-    // Only sync URL after the selected course data is loaded,
-    // so we don't carry a stale homework key across course switches.
-    if (!selectedCourse || routeError || !courseData || courseData.课程 !== selectedCourse) return
-    const nextPathname = `/course/${selectedCourse}`
+    if (!routeHomework || !courseData) return
+    const keys = Object.keys(courseData.作业统计 || {})
+    if (!keys.includes(routeHomework)) return
+    setSelectedKey(routeHomework)
+  }, [courseData, routeHomework])
+
+  useEffect(() => {
+    if (!selectedCourse || !courseData || courseData.课程 !== selectedCourse) return
+    const nextPathname = buildCoursePath(selectedCourse)
     const nextSearchParams = new URLSearchParams()
     if (selectedKey) {
       nextSearchParams.set('hw', selectedKey)
@@ -320,10 +324,22 @@ function App() {
         { replace: true },
       )
     }
-  }, [courseData, navigate, routeCourse, routeError, searchParams, selectedCourse, selectedKey])
+  }, [courseData, navigate, routeCourse, searchParams, selectedCourse, selectedKey])
+
+  const routeError = useMemo(() => {
+    if (!indexData) return ''
+    if (!routeCourse) return '路由缺少课程参数，请使用分享链接进入。'
+    if (!courseMap.has(routeCourse)) return `课程参数无效：${routeCourse}`
+    if (routeHomework && courseData && !(routeHomework in (courseData.作业统计 || {}))) {
+      return `作业参数无效：${routeHomework}`
+    }
+    return ''
+  }, [courseData, courseMap, indexData, routeCourse, routeHomework])
+
+  const error = indexError || courseError
 
   async function handleShareLink() {
-    if (!selectedCourse || routeError) return
+    if (!selectedCourse || !courseData || routeError) return
     const url = window.location.href
     try {
       if (!navigator.clipboard?.writeText) {
@@ -383,7 +399,7 @@ function App() {
     indexData?.更新时间 ||
     '加载中...'
 
-  const canInteract = !routeError && !!selectedCourse
+  const canInteract = !routeError && !!selectedCourse && !!courseData
 
   return (
     <main className="min-h-screen text-slate-900">
@@ -435,13 +451,11 @@ function App() {
                 value={selectedCourse}
                 onChange={(e) => {
                   const nextCourse = e.target.value
-                  // Reset stale homework state before route switch.
-                  setRouteError('')
-                  setSelectedKey('')
-                  navigate({ pathname: `/course/${nextCourse}`, search: '' }, { replace: false })
+                  navigate({ pathname: buildCoursePath(nextCourse), search: '' }, { replace: false })
                 }}
                 disabled={!courseList.length}
               >
+                {!selectedCourse && <option value="">请选择课程</option>}
                 {courseList.map((courseName) => (
                   <option key={courseName} value={courseName}>
                     {courseName}
@@ -465,10 +479,14 @@ function App() {
                     nextSearchParams.set('hw', nextHw)
                   }
                   const nextSearch = nextSearchParams.toString()
-                  navigate({ pathname: `/course/${selectedCourse}`, search: nextSearch ? `?${nextSearch}` : '' }, { replace: false })
+                  navigate(
+                    { pathname: buildCoursePath(selectedCourse), search: nextSearch ? `?${nextSearch}` : '' },
+                    { replace: false },
+                  )
                 }}
                 disabled={!homeworkKeys.length || !canInteract}
               >
+                {!selectedKey && <option value="">请选择作业</option>}
                 {homeworkKeys.map((k) => (
                   <option key={k} value={k}>
                     {k}
