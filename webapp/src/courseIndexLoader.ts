@@ -21,6 +21,12 @@ function joinPublicPath(publicBase: string, relativePath: string): string {
   return `${base}${relativePath}`
 }
 
+function appendVersion(url: string, version?: string): string {
+  if (!version) return url
+  const connector = url.includes('?') ? '&' : '?'
+  return `${url}${connector}v=${encodeURIComponent(version)}`
+}
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init)
   if (!response.ok) {
@@ -41,10 +47,16 @@ export async function loadCourseIndex(publicBase: string): Promise<{
     throw new Error('course-manifest.json 缺少 indexFile')
   }
 
-  const index = await fetchJson<CourseIndex>(joinPublicPath(publicBase, manifest.indexFile))
+  const index = await fetchJson<CourseIndex>(
+    appendVersion(joinPublicPath(publicBase, manifest.indexFile), manifest.version),
+  )
   if (!(index.课程列表 || []).length) {
     throw new Error('课程索引中没有可用课程数据')
   }
 
   return { manifest, index }
+}
+
+export function buildVersionedJsonUrl(publicBase: string, relativePath: string, version?: string): string {
+  return appendVersion(joinPublicPath(publicBase, relativePath), version)
 }

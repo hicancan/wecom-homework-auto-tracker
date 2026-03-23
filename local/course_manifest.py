@@ -2,14 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-
-
-def sanitize_filename_component(text: str) -> str:
-    return re.sub(r'[\\/:*?"<>|]', "_", str(text)).strip()
 
 
 def _hash_bytes(data: bytes) -> str:
@@ -20,14 +15,30 @@ def _dump_json(data: dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
 
 
-def _load_index(path: Path) -> dict[str, Any]:
+def _load_json_object(path: Path, label: str) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as err:
-        raise ValueError(f"课程索引 JSON 解析失败: {path}: {err}") from err
+        raise ValueError(f"{label} JSON 解析失败: {path}: {err}") from err
     if not isinstance(data, dict):
-        raise ValueError(f"课程索引格式无效（应为 JSON 对象）: {path}")
+        raise ValueError(f"{label}格式无效（应为 JSON 对象）: {path}")
     return data
+
+
+def _cleanup_legacy_hashed_files(public_root: Path) -> None:
+    for old_index in public_root.glob("courses.*.json"):
+        old_index.unlink()
+
+    data_dir = public_root / "data"
+    if not data_dir.exists():
+        return
+
+    for old_data in data_dir.glob("*.json"):
+        name = old_data.name
+        if ".hw" in name or name.endswith(".index.json"):
+            continue
+        if name.count(".") >= 2:
+            old_data.unlink()
 
 
 def rebuild_course_manifest(public_root: Path, course_index_path: Path) -> dict[str, str]:
@@ -36,80 +47,59 @@ def rebuild_course_manifest(public_root: Path, course_index_path: Path) -> dict[
     if not course_index_path.exists():
         raise FileNotFoundError(f"找不到课程索引文件: {course_index_path}")
 
-    index_data = _load_index(course_index_path)
-    raw_list = index_data.get("课程列表", [])
-    if not isinstance(raw_list, list):
+    _cleanup_legacy_hashed_files(public_root)
+
+    index_data = _load_json_object(course_index_path, "课程索引")
+    raw_courses = index_data.get("课程列表", [])
+    if not isinstance(raw_courses, list):
         raise ValueError("课程索引中的 '课程列表' 必须是数组。")
 
-    data_dir = public_root / "data"
-    data_dir.mkdir(parents=True, exist_ok=True)
+    hash_input = bytearray()
+    hash_input.extend(course_index_path.read_bytes())
 
-    hashed_courses: list[dict[str, str]] = []
-    keep_hashed_data: dict[str, str] = {}
-
-    for item in raw_list:
+    for item in raw_courses:
         if not isinstance(item, dict):
             continue
-
-        course_name = str(item.get("课程", "")).strip()
-        source_rel = str(item.get("数据文件", "")).strip()
-        if not course_name or not source_rel:
+        rel = str(item.get("数据文件", "")).strip()
+        if not rel:
             continue
+        course_index_file = (public_root / rel).resolve()
+        if not course_index_file.exists():
+            raise FileNotFoundError(f"课程索引文件不存在: {rel} ({course_index_file})")
+        hash_input.extend(course_index_file.read_bytes())
 
-        source_path = (public_root / source_rel).resolve()
-        if not source_path.exists():
-            raise FileNotFoundError(f"课程数据文件不存在: {source_rel} ({source_path})")
-
-        source_bytes = source_path.read_bytes()
-        course_slug = sanitize_filename_component(course_name)
-        content_hash = _hash_bytes(source_bytes)
-        hashed_filename = f"{course_slug}.{content_hash}.json"
-        hashed_rel = f"data/{hashed_filename}"
-        hashed_path = data_dir / hashed_filename
-
-        if not hashed_path.exists() or hashed_path.read_bytes() != source_bytes:
-            hashed_path.write_bytes(source_bytes)
-
-        keep_hashed_data[course_slug] = hashed_filename
-        hashed_courses.append({"课程": course_name, "数据文件": hashed_rel})
-
-    for course_slug, keep_name in keep_hashed_data.items():
-        for old_file in data_dir.glob(f"{course_slug}.*.json"):
-            if old_file.name == keep_name:
+        course_data = _load_json_object(course_index_file, "课程作业索引")
+        homework_list = course_data.get("作业列表", [])
+        if not isinstance(homework_list, list):
+            continue
+        for hw in homework_list:
+            if not isinstance(hw, dict):
                 continue
-            old_file.unlink()
+            hw_rel = str(hw.get("数据文件", "")).strip()
+            if not hw_rel:
+                continue
+            hw_file = (public_root / hw_rel).resolve()
+            if not hw_file.exists():
+                raise FileNotFoundError(f"作业数据文件不存在: {hw_rel} ({hw_file})")
+            hash_input.extend(hw_file.read_bytes())
 
+    version = _hash_bytes(bytes(hash_input))
     now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    hashed_courses.sort(key=lambda item: item["课程"])
-    hashed_index: dict[str, Any] = {"更新时间": now_text, "课程列表": hashed_courses}
+    manifest: dict[str, Any] = {
+        "version": version,
+        "更新时间": now_text,
+        "indexFile": "courses.json",
+    }
+
     deploy_time = index_data.get("最后部署时间")
     if isinstance(deploy_time, str) and deploy_time.strip():
-        hashed_index["最后部署时间"] = deploy_time.strip()
-
-    hashed_index_bytes = _dump_json(hashed_index).encode("utf-8")
-    index_hash = _hash_bytes(hashed_index_bytes)
-    hashed_index_name = f"courses.{index_hash}.json"
-    hashed_index_path = public_root / hashed_index_name
-    hashed_index_path.write_bytes(hashed_index_bytes)
-
-    for old_index in public_root.glob("courses.*.json"):
-        if old_index.name == hashed_index_name:
-            continue
-        old_index.unlink()
-
-    manifest: dict[str, Any] = {
-        "version": index_hash,
-        "更新时间": now_text,
-        "indexFile": hashed_index_name,
-    }
-    if "最后部署时间" in hashed_index:
-        manifest["最后部署时间"] = hashed_index["最后部署时间"]
+        manifest["最后部署时间"] = deploy_time.strip()
 
     manifest_path = public_root / "course-manifest.json"
     manifest_path.write_text(_dump_json(manifest), encoding="utf-8")
 
     return {
         "manifest_file": str(manifest_path),
-        "index_file": str(hashed_index_path),
-        "version": index_hash,
+        "index_file": str(course_index_path),
+        "version": version,
     }

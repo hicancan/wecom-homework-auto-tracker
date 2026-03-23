@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
+  buildVersionedJsonUrl,
   type CourseIndex,
   type CourseItem,
   type CourseManifest,
@@ -19,6 +20,8 @@ type ClassStat = {
 type HomeworkStat = {
   作业: string
   课程: string
+  更新时间?: string
+  最后部署时间?: string
   最后提交时间?: string
   其他已交名单?: string[]
   汇总?: {
@@ -30,11 +33,16 @@ type HomeworkStat = {
   班级统计: Record<string, ClassStat>
 }
 
-type CourseData = {
+type CourseHomeworkRef = {
+  作业: string
+  数据文件: string
+}
+
+type CourseHomeworkIndex = {
   课程: string
   更新时间?: string
   最后部署时间?: string
-  作业统计: Record<string, HomeworkStat>
+  作业列表: CourseHomeworkRef[]
 }
 
 function parseHomeworkOrder(text: string): number {
@@ -65,11 +73,6 @@ function safeDecodeURIComponent(value: string): string {
 
 function buildCoursePath(courseName: string): string {
   return `/course/${encodeURIComponent(courseName)}`
-}
-
-function joinPublicPath(publicBase: string, relativePath: string): string {
-  const base = publicBase.endsWith('/') ? publicBase : `${publicBase}/`
-  return `${base}${relativePath}`
 }
 
 type DonutProps = {
@@ -222,8 +225,10 @@ function App() {
 
   const [manifestData, setManifestData] = useState<CourseManifest | null>(null)
   const [indexData, setIndexData] = useState<CourseIndex | null>(null)
-  const [courseData, setCourseData] = useState<CourseData | null>(null)
+  const [courseHomeworkIndex, setCourseHomeworkIndex] = useState<CourseHomeworkIndex | null>(null)
+  const [selectedHomeworkData, setSelectedHomeworkData] = useState<HomeworkStat | null>(null)
   const [isCourseLoading, setIsCourseLoading] = useState(false)
+  const [isHomeworkLoading, setIsHomeworkLoading] = useState(false)
   const [shareFeedback, setShareFeedback] = useState('')
   const [indexError, setIndexError] = useState('')
   const [courseError, setCourseError] = useState('')
@@ -269,9 +274,11 @@ function App() {
 
   useEffect(() => {
     if (!selectedCourse) {
-      setCourseData(null)
+      setCourseHomeworkIndex(null)
+      setSelectedHomeworkData(null)
       setCourseError('')
       setIsCourseLoading(false)
+      setIsHomeworkLoading(false)
       return
     }
 
@@ -280,37 +287,44 @@ function App() {
 
     const controller = new AbortController()
     setIsCourseLoading(true)
-    setCourseData(null)
+    setCourseHomeworkIndex(null)
+    setSelectedHomeworkData(null)
     setCourseError('')
 
-    fetch(joinPublicPath(publicBase, item.数据文件), { signal: controller.signal })
+    fetch(buildVersionedJsonUrl(publicBase, item.数据文件, manifestData?.version), { signal: controller.signal })
       .then((res) => {
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`)
         }
-        return res.json() as Promise<CourseData>
+        return res.json() as Promise<CourseHomeworkIndex>
       })
       .then((json) => {
         if (controller.signal.aborted) return
-        setCourseData(json)
+        setCourseHomeworkIndex(json)
         setIsCourseLoading(false)
       })
       .catch((e: unknown) => {
         if (controller.signal.aborted) return
-        setCourseData(null)
+        setCourseHomeworkIndex(null)
+        setSelectedHomeworkData(null)
         setCourseError(e instanceof Error ? e.message : '课程数据加载失败')
         setIsCourseLoading(false)
       })
 
     return () => controller.abort()
-  }, [courseMap, publicBase, selectedCourse])
+  }, [courseMap, manifestData?.version, publicBase, selectedCourse])
+
+  const homeworkMap = useMemo(() => {
+    const map = new Map<string, CourseHomeworkRef>()
+    for (const item of courseHomeworkIndex?.作业列表 || []) {
+      map.set(item.作业, item)
+    }
+    return map
+  }, [courseHomeworkIndex])
 
   const homeworkKeys = useMemo(() => {
-    if (!courseData) return []
-    return Object.keys(courseData.作业统计 || {}).sort(
-      (a, b) => parseHomeworkOrder(a) - parseHomeworkOrder(b),
-    )
-  }, [courseData])
+    return Array.from(homeworkMap.keys()).sort((a, b) => parseHomeworkOrder(a) - parseHomeworkOrder(b))
+  }, [homeworkMap])
 
   const selectedKey = useMemo(() => {
     if (!homeworkKeys.length) return ''
@@ -321,7 +335,50 @@ function App() {
   }, [homeworkKeys, routeHomework])
 
   useEffect(() => {
-    if (!selectedCourse || !courseData || courseData.课程 !== selectedCourse) return
+    if (!selectedCourse || !selectedKey) {
+      setSelectedHomeworkData(null)
+      setIsHomeworkLoading(false)
+      return
+    }
+
+    const homeworkRef = homeworkMap.get(selectedKey)
+    if (!homeworkRef) {
+      setSelectedHomeworkData(null)
+      setIsHomeworkLoading(false)
+      return
+    }
+
+    const controller = new AbortController()
+    setIsHomeworkLoading(true)
+    setSelectedHomeworkData(null)
+    setCourseError('')
+
+    fetch(buildVersionedJsonUrl(publicBase, homeworkRef.数据文件, manifestData?.version), {
+      signal: controller.signal,
+    })
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`)
+        }
+        return res.json() as Promise<HomeworkStat>
+      })
+      .then((json) => {
+        if (controller.signal.aborted) return
+        setSelectedHomeworkData(json)
+        setIsHomeworkLoading(false)
+      })
+      .catch((e: unknown) => {
+        if (controller.signal.aborted) return
+        setSelectedHomeworkData(null)
+        setCourseError(e instanceof Error ? e.message : '作业数据加载失败')
+        setIsHomeworkLoading(false)
+      })
+
+    return () => controller.abort()
+  }, [homeworkMap, manifestData?.version, publicBase, selectedCourse, selectedKey])
+
+  useEffect(() => {
+    if (!selectedCourse || !courseHomeworkIndex || courseHomeworkIndex.课程 !== selectedCourse) return
     const nextPathname = buildCoursePath(selectedCourse)
     const nextSearchParams = new URLSearchParams()
     if (selectedKey) {
@@ -339,22 +396,22 @@ function App() {
         { replace: true },
       )
     }
-  }, [courseData, navigate, routeCourse, routeHomework, searchParams, selectedCourse, selectedKey])
+  }, [courseHomeworkIndex, navigate, routeCourse, routeHomework, searchParams, selectedCourse, selectedKey])
 
   const routeError = useMemo(() => {
     if (!indexData) return ''
     if (!routeCourse) return '路由缺少课程参数，请使用分享链接进入。'
     if (!courseMap.has(routeCourse)) return `课程参数无效：${routeCourse}`
-    if (routeHomework && courseData && !(routeHomework in (courseData.作业统计 || {}))) {
+    if (routeHomework && courseHomeworkIndex && !homeworkMap.has(routeHomework)) {
       return `作业参数无效：${routeHomework}`
     }
     return ''
-  }, [courseData, courseMap, indexData, routeCourse, routeHomework])
+  }, [courseHomeworkIndex, courseMap, homeworkMap, indexData, routeCourse, routeHomework])
 
   const error = indexError || courseError
 
   async function handleShareLink() {
-    if (!selectedCourse || !courseData || routeError) return
+    if (!selectedCourse || routeError) return
     const url = window.location.href
     try {
       if (!navigator.clipboard?.writeText) {
@@ -367,10 +424,7 @@ function App() {
     }
   }
 
-  const selected = useMemo(() => {
-    if (!courseData || !selectedKey) return null
-    return courseData.作业统计[selectedKey] || null
-  }, [courseData, selectedKey])
+  const selected = selectedHomeworkData
 
   const courseList = useMemo(() => {
     if (!indexData) return []
@@ -406,15 +460,17 @@ function App() {
   const summaryRate = aggregateRate
 
   const deployTime =
-    courseData?.最后部署时间 ||
+    selectedHomeworkData?.最后部署时间 ||
+    courseHomeworkIndex?.最后部署时间 ||
     manifestData?.最后部署时间 ||
     indexData?.最后部署时间 ||
-    courseData?.更新时间 ||
+    selectedHomeworkData?.更新时间 ||
+    courseHomeworkIndex?.更新时间 ||
     manifestData?.更新时间 ||
     indexData?.更新时间 ||
     '加载中...'
 
-  const canInteract = !routeError && !!selectedCourse && !!courseData
+  const canInteract = !routeError && !!selectedCourse && !!courseHomeworkIndex
 
   return (
     <main className="min-h-screen text-slate-900">
@@ -616,7 +672,7 @@ function App() {
                 </article>
               ))}
 
-          {!selected && !error && courseData && (
+          {!selected && !error && courseHomeworkIndex && !isHomeworkLoading && (
             <article className="col-span-full animate-rise rounded-2xl border border-slate-200 bg-white/95 p-6 text-center text-slate-600 shadow-[0_20px_45px_rgba(14,165,233,0.08)]">
               当前课程暂无作业提交数据
             </article>

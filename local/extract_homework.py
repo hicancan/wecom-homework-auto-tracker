@@ -373,24 +373,39 @@ def format_datetime(value: Any) -> str:
 
 
 def load_existing_course_homework_stats(
-    web_data_root: Path,
+    public_root: Path,
     course_name: str,
 ) -> dict[str, dict[str, Any]]:
-    course_filename = f"{sanitize_filename_component(course_name)}.json"
-    course_path = web_data_root / course_filename
-    if not course_path.exists():
+    web_data_root = public_root / "data"
+    course_slug = sanitize_filename_component(course_name)
+    course_index_path = web_data_root / f"{course_slug}.index.json"
+    normalized: dict[str, dict[str, Any]] = {}
+
+    if not course_index_path.exists():
         return {}
     try:
-        course_data = json.loads(course_path.read_text(encoding="utf-8"))
+        course_index = json.loads(course_index_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return {}
-    stats = course_data.get("作业统计", {})
-    if not isinstance(stats, dict):
+    hw_list = course_index.get("作业列表", [])
+    if not isinstance(hw_list, list):
         return {}
-    normalized: dict[str, dict[str, Any]] = {}
-    for key, value in stats.items():
-        if isinstance(key, str) and isinstance(value, dict):
-            normalized[key] = value
+    for item in hw_list:
+        if not isinstance(item, dict):
+            continue
+        hw_label = str(item.get("作业", "")).strip()
+        rel = str(item.get("数据文件", "")).strip()
+        if not hw_label or not rel:
+            continue
+        hw_path = (public_root / rel).resolve()
+        if not hw_path.exists():
+            continue
+        try:
+            hw_data = json.loads(hw_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(hw_data, dict):
+            normalized[hw_label] = hw_data
     return normalized
 
 
@@ -520,18 +535,49 @@ def write_course_web_data(
     web_data_root.mkdir(parents=True, exist_ok=True)
     course_index_path.parent.mkdir(parents=True, exist_ok=True)
 
-    sorted_homework = dict(
-        sorted(homework_stats.items(), key=lambda kv: parse_homework_order(kv[0]))
-    )
+    sorted_homework_items = sorted(homework_stats.items(), key=lambda kv: parse_homework_order(kv[0]))
+    course_slug = sanitize_filename_component(course_name)
 
-    course_filename = f"{sanitize_filename_component(course_name)}.json"
-    course_relative_path = f"data/{course_filename}"
+    keep_homework_filenames: set[str] = set()
+    course_homework_list: list[dict[str, str]] = []
+
+    for hw_label, hw_stat in sorted_homework_items:
+        order = parse_homework_order(hw_label)
+        if order != 10**9:
+            hw_filename = f"{course_slug}.hw{order:03d}.json"
+        else:
+            hw_filename = f"{course_slug}.{sanitize_filename_component(hw_label)}.json"
+        keep_homework_filenames.add(hw_filename)
+
+        hw_relative_path = f"data/{hw_filename}"
+        hw_payload = dict(hw_stat)
+        hw_payload.setdefault("作业", hw_label)
+        hw_payload.setdefault("课程", course_name)
+        hw_payload["更新时间"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        (web_data_root / hw_filename).write_text(
+            json.dumps(hw_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        course_homework_list.append({"作业": hw_label, "数据文件": hw_relative_path})
+
+    for old_file in web_data_root.glob(f"{course_slug}.hw*.json"):
+        if old_file.name in keep_homework_filenames:
+            continue
+        old_file.unlink()
+
+    # Remove legacy monolithic course file after migration.
+    legacy_course_file = web_data_root / f"{course_slug}.json"
+    if legacy_course_file.exists():
+        legacy_course_file.unlink()
+
+    course_index_filename = f"{course_slug}.index.json"
+    course_relative_path = f"data/{course_index_filename}"
     course_data = {
         "课程": course_name,
         "更新时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "作业统计": sorted_homework,
+        "作业列表": course_homework_list,
     }
-    (web_data_root / course_filename).write_text(
+    (web_data_root / course_index_filename).write_text(
         json.dumps(course_data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
@@ -717,7 +763,10 @@ def main() -> None:
     stats_dir = course_out_dir / "stats"
     stats_dir.mkdir(parents=True, exist_ok=True)
 
-    existing_stats = load_existing_course_homework_stats(web_data_root=web_data_root, course_name=course_name)
+    existing_stats = load_existing_course_homework_stats(
+        public_root=course_index_path.parent,
+        course_name=course_name,
+    )
     all_stats: dict[str, dict[str, Any]] = {}
     for hw, stat in existing_stats.items():
         order = parse_homework_order(hw)
@@ -798,10 +847,10 @@ def main() -> None:
     print(f"- 课程输出目录: {course_out_dir}")
     print(f"- 单次作业统计目录: {stats_dir}")
     print(f"- 课程汇总: {summary_path}")
-    print(f"- web 课程数据: {web_data_root / (sanitize_filename_component(course_name) + '.json')}")
+    print(f"- web 课程作业索引: {web_data_root / (sanitize_filename_component(course_name) + '.index.json')}")
     print(f"- web 课程索引: {course_index_path}")
     print(f"- web manifest: {manifest_result['manifest_file']}")
-    print(f"- web 哈希索引: {manifest_result['index_file']}")
+    print(f"- web 版本索引: {manifest_result['index_file']}")
 
 
 if __name__ == "__main__":
