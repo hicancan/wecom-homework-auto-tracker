@@ -95,7 +95,8 @@ function Parse-IndexSelection {
     if ([string]::IsNullOrWhiteSpace($InputText)) {
         throw "未输入课程编号。"
     }
-    $text = $InputText.Trim().ToLowerInvariant()
+    # Normalize common full-width punctuation for easier input, e.g. "1，2".
+    $text = $InputText.Trim().TrimStart([char]0xFEFF).ToLowerInvariant().Replace("，", ",").Replace("、", ",")
     if ($text -eq "all") {
         return 1..$MaxIndex
     }
@@ -128,7 +129,7 @@ function Parse-IndexSelection {
         throw "无法解析课程选择片段: '$part'"
     }
 
-    return $picked.ToArray() | Sort-Object
+    return @($picked) | Sort-Object
 }
 
 function Read-PositiveInt {
