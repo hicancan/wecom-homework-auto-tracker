@@ -91,7 +91,7 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
 # 安装依赖项
-pip install pandas openpyxl requests
+pip install pandas openpyxl
 ```
 
 ### 2️⃣ 准备本地配置文件

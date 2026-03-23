@@ -3,21 +3,17 @@
 # dependencies = [
 #     "pandas",
 #     "openpyxl",
-#     "requests",
 # ]
 # ///
 import argparse
 import json
-import os
 import re
 import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
 
 import pandas as pd
-import requests
 from course_manifest import rebuild_course_manifest
 
 
@@ -57,25 +53,6 @@ def resolve_path(text: str, base_dir: Path) -> Path:
     return candidate
 
 
-def get_exact_filename_from_url(url: str) -> str:
-    """访问腾讯微盘分享链接，从网页 <title> 提取同步后的精确文件名。"""
-    url = url.strip()
-    if not url.startswith("http"):
-        return url
-
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        match = re.search(r"<title>(.*?)</title>", response.text)
-        if match:
-            title = match.group(1).strip()
-            if title and "微信" not in title and "腾讯" not in title:
-                return title
-    except Exception as err:
-        print(f"  [!] 获取URL文件名失败: {err}")
-    return ""
-
-
 def normalize_name(name: str) -> str:
     return re.sub(r"\s+", "", str(name)).strip()
 
@@ -95,6 +72,40 @@ def normalize_homework_label(value: str) -> str:
     if match:
         return f"第{match.group(1)}次"
     return raw
+
+
+def normalize_uploaded_filename(value: Any) -> str:
+    raw = str(value).strip()
+    if not raw:
+        return ""
+    cleaned = raw.replace("\\", "/")
+    if "/" in cleaned:
+        cleaned = cleaned.split("/")[-1]
+    return cleaned.strip()
+
+
+def normalize_filename_key(filename: str) -> str:
+    return str(filename).strip().lower()
+
+
+def build_attachment_lookup(
+    attachments_dir: Path,
+) -> tuple[dict[str, str], dict[str, list[str]]]:
+    grouped: dict[str, list[str]] = {}
+    for path in attachments_dir.iterdir():
+        if not path.is_file():
+            continue
+        key = normalize_filename_key(path.name)
+        grouped.setdefault(key, []).append(path.name)
+
+    unique_lookup: dict[str, str] = {}
+    duplicate_lookup: dict[str, list[str]] = {}
+    for key, names in grouped.items():
+        if len(names) == 1:
+            unique_lookup[key] = names[0]
+        else:
+            duplicate_lookup[key] = sorted(names)
+    return unique_lookup, duplicate_lookup
 
 
 def discover_courses(config_dir: Path) -> dict[str, Path]:
@@ -343,37 +354,50 @@ def scope_students_by_classes(
 
 
 def resolve_attachment_filename(
-    file_url: str,
-    files_in_dir: list[str],
+    uploaded_value: str,
+    attachment_lookup: dict[str, str],
+    duplicate_lookup: dict[str, list[str]],
 ) -> tuple[str, list[str]]:
-    candidates: list[str] = []
+    uploaded_name = normalize_uploaded_filename(uploaded_value)
+    if not uploaded_name:
+        return "", []
 
-    title_name = get_exact_filename_from_url(file_url)
-    if title_name:
-        candidates.append(title_name)
+    key = normalize_filename_key(uploaded_name)
+    if key in duplicate_lookup:
+        return "", duplicate_lookup[key]
 
-    if file_url.startswith("http"):
-        path_name = unquote(os.path.basename(urlparse(file_url).path or "")).strip()
-        if (
-            path_name
-            and path_name.lower() not in {"s", "file", "download"}
-            and (len(path_name) > 3 or "." in path_name)
-        ):
-            candidates.append(path_name)
-    elif file_url:
-        candidates.append(file_url.strip())
-
-    for candidate in candidates:
-        if candidate in files_in_dir:
-            return candidate, candidates
-
-    return "", candidates
+    found = attachment_lookup.get(key, "")
+    if found:
+        return found, [uploaded_name]
+    return "", [uploaded_name]
 
 
 def format_datetime(value: Any) -> str:
     if pd.isna(value):
         return ""
     return pd.to_datetime(value).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def analyze_latest_uploaded_filename_uniqueness(
+    df: pd.DataFrame,
+    col_time: str,
+    col_file: str,
+) -> tuple[int, int, dict[str, int]]:
+    df_latest = (
+        df.sort_values(by=col_time)
+        .drop_duplicates(subset=["_homework_label", "_name_norm"], keep="last")
+        .copy()
+    )
+    files = (
+        df_latest[col_file]
+        .map(normalize_uploaded_filename)
+        .astype(str)
+        .map(str.strip)
+    )
+    files = files[files != ""]
+    counts = files.value_counts()
+    duplicates = counts[counts > 1]
+    return len(files), files.nunique(), duplicates.to_dict()
 
 
 def build_missing_attachment_summary(stat: dict[str, Any]) -> dict[str, Any]:
@@ -514,14 +538,14 @@ def make_homework_stat(
     students_by_class: dict[str, list[dict[str, str]]],
     other_students_by_name: dict[str, dict[str, str]],
     attachments_dir: Path,
+    attachment_lookup: dict[str, str],
+    duplicate_lookup: dict[str, list[str]],
     homework_output_dir: Path,
 ) -> dict[str, Any] | None:
     df_hw = df[df["_homework_label"] == homework_label].copy()
     if df_hw.empty:
         return None
 
-    df_hw[col_time] = pd.to_datetime(df_hw[col_time])
-    df_hw["_name_norm"] = df_hw[col_name].astype(str).map(normalize_name)
     df_latest = df_hw.sort_values(by=col_time).drop_duplicates(subset=["_name_norm"], keep="last")
     latest_by_name = {row["_name_norm"]: row for _, row in df_latest.iterrows()}
     latest_submit_time = format_datetime(df_hw[col_time].max())
@@ -533,8 +557,6 @@ def make_homework_stat(
     all_classes = sorted(students_by_class.keys())
     for class_name in all_classes:
         (homework_output_dir / class_name).mkdir(parents=True, exist_ok=True)
-
-    files_in_dir = os.listdir(attachments_dir)
 
     stat: dict[str, Any] = {
         "作业": homework_label,
@@ -567,18 +589,19 @@ def make_homework_stat(
 
             submitted.append(student_no)
             person_name = str(row[col_name])
-            file_url = str(row[col_file])
+            uploaded_value = str(row[col_file]).strip()
             target_file, candidate_files = resolve_attachment_filename(
-                file_url=file_url,
-                files_in_dir=files_in_dir,
+                uploaded_value=uploaded_value,
+                attachment_lookup=attachment_lookup,
+                duplicate_lookup=duplicate_lookup,
             )
 
             if not target_file:
                 print(f"  [!] 已交但未匹配到附件: [{person_name}/{student_no}]")
                 if candidate_files:
                     print(f"      候选附件名: {' | '.join(candidate_files)}")
-                if file_url.strip():
-                    print(f"      原始上传字段: {file_url}")
+                if uploaded_value:
+                    print(f"      原始上传字段: {uploaded_value}")
                 attachment_missing.append(student_no)
                 attachment_missing_details.append(
                     {
@@ -586,13 +609,14 @@ def make_homework_stat(
                         "学号": student_no,
                         "姓名": person_name,
                         "候选附件名": candidate_files,
-                        "原始上传字段": file_url,
+                        "原始上传字段": uploaded_value,
                     }
                 )
                 continue
 
-            if target_file not in files_in_dir:
-                print(f"  [!] 已交但附件未同步: [{person_name}] -> '{target_file}'")
+            src_path = attachments_dir / target_file
+            if not src_path.exists():
+                print(f"  [!] 已交但附件不存在: [{person_name}/{student_no}] -> '{target_file}'")
                 attachment_missing.append(student_no)
                 attachment_missing_details.append(
                     {
@@ -600,12 +624,10 @@ def make_homework_stat(
                         "学号": student_no,
                         "姓名": person_name,
                         "候选附件名": [target_file],
-                        "原始上传字段": file_url,
+                        "原始上传字段": uploaded_value,
                     }
                 )
                 continue
-
-            src_path = attachments_dir / target_file
             ext = src_path.suffix
             renamed = f"{student_no}{sanitize_filename_component(student_name)}{ext}"
             dst_path = homework_output_dir / class_name / renamed
@@ -873,11 +895,38 @@ def main() -> None:
         print(f">>> 已自动更新课程班级配置: {local_config_path}")
 
     df = df.copy()
+    df[col_time] = pd.to_datetime(df[col_time], errors="coerce")
     df["_homework_label"] = df[col_hw].astype(str).map(normalize_homework_label)
+    df["_name_norm"] = df[col_name].astype(str).map(normalize_name)
     homework_labels = sorted(
         [x for x in df["_homework_label"].dropna().unique() if str(x).strip()],
         key=parse_homework_order,
     )
+    latest_file_total, latest_file_unique, latest_file_duplicates = analyze_latest_uploaded_filename_uniqueness(
+        df=df,
+        col_time=col_time,
+        col_file=col_file,
+    )
+    print(
+        ">>> Excel附件名唯一性（按每位同学每次作业最新记录）:"
+        f" 非空={latest_file_total}, 唯一={latest_file_unique}, 重复={len(latest_file_duplicates)}"
+    )
+    if latest_file_duplicates:
+        print("  [!] 检测到重复附件名（将标记为歧义并计入附件缺失）：")
+        for file_name, count in sorted(latest_file_duplicates.items(), key=lambda kv: kv[1], reverse=True)[:10]:
+            print(f"      - {file_name} x{count}")
+
+    attachment_lookup, duplicate_lookup = build_attachment_lookup(attachments_dir)
+    print(
+        ">>> 本地附件索引:"
+        f" 唯一文件={len(attachment_lookup)}, 同名冲突键={len(duplicate_lookup)}"
+    )
+    if duplicate_lookup:
+        print("  [!] 本地附件存在同名冲突（仅显示前10项）：")
+        for idx, (key, names) in enumerate(sorted(duplicate_lookup.items())):
+            if idx >= 10:
+                break
+            print(f"      - {key}: {' | '.join(names)}")
     from_order = args.from_order
     to_order = args.to_order
 
@@ -920,6 +969,8 @@ def main() -> None:
             students_by_class=students_by_class,
             other_students_by_name=other_students_by_name,
             attachments_dir=attachments_dir,
+            attachment_lookup=attachment_lookup,
+            duplicate_lookup=duplicate_lookup,
             homework_output_dir=hw_dir,
         )
         if stat is None:
