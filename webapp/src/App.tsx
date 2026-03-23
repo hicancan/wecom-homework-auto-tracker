@@ -540,7 +540,7 @@ function App() {
                       <p className="text-base font-semibold text-teal-700">{(classStat.提交率 * 100).toFixed(2)}%</p>
                     </div>
                   </div>
-                  <p className="mb-2 text-xs font-medium text-slate-500">未提交的学号名单</p>
+                  <p className="mb-2 text-center text-xs font-medium text-slate-500">未提交的学号名单</p>
                   <ul className="space-y-2 text-sm">
                     {classStat.未交名单.length ? (
                       classStat.未交名单.map((name) => (
