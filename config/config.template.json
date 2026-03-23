@@ -1,0 +1,9 @@
+{
+  "courses_dir": "config",
+  "attachments_root": "C:/Users/yourname/Documents/WXWork/your-id/WeDrive/your-org/我的文件",
+  "attachments": "",
+  "students": "config/students.json",
+  "out_root": "out",
+  "web_data_root": "webapp/public/data",
+  "course_index": "webapp/public/courses.json"
+}

@@ -1,0 +1,107 @@
+name: Deploy Web To Pages
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - webapp/**
+      - local/extract_homework.py
+      - .github/workflows/pages.yml
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Inject deploy timestamp
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from datetime import datetime, timezone, timedelta
+          from pathlib import Path
+
+          now = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8)))
+          deploy_time = now.strftime("%Y-%m-%d %H:%M:%S")
+
+          index_path = Path("webapp/public/courses.json")
+          if index_path.exists():
+            index_data = json.loads(index_path.read_text(encoding="utf-8"))
+          else:
+            index_data = {"课程列表": []}
+
+          index_data["最后部署时间"] = deploy_time
+          index_path.parent.mkdir(parents=True, exist_ok=True)
+          index_path.write_text(json.dumps(index_data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+          for item in index_data.get("课程列表", []):
+            rel = item.get("数据文件")
+            if not rel:
+              continue
+            data_path = Path("webapp/public") / rel
+            if not data_path.exists():
+              continue
+            try:
+              course_data = json.loads(data_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+              continue
+            course_data["最后部署时间"] = deploy_time
+            data_path.write_text(json.dumps(course_data, ensure_ascii=False, indent=2), encoding="utf-8")
+          PY
+
+      - name: Install dependencies
+        working-directory: webapp
+        run: npm ci
+
+      - name: Build webapp
+        working-directory: webapp
+        run: npm run build
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: webapp/dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Purge Cloudflare Cache
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
+        run: |
+          if [ -z "${CF_API_TOKEN}" ] || [ -z "${CF_ZONE_ID}" ]; then
+            echo "Skip purge: CF_API_TOKEN or CF_ZONE_ID is not set."
+            exit 0
+          fi
+          curl --fail-with-body -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data '{"purge_everything":true}'

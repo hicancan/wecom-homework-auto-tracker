@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WeCom Homework Auto Tracker</title>
+    <style>
+        :root {
+            --bg: #f5f7fb;
+            --card: #ffffff;
+            --text: #0f172a;
+            --muted: #475569;
+            --primary: #0ea5e9;
+            --line: #e2e8f0;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+            background: radial-gradient(circle at top right, #e0f2fe 0%, var(--bg) 42%);
+            color: var(--text);
+            min-height: 100vh;
+        }
+        .wrap {
+            max-width: 920px;
+            margin: 0 auto;
+            padding: 52px 20px 40px;
+        }
+        .card {
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            padding: 28px;
+            box-shadow: 0 18px 50px rgba(2, 132, 199, 0.14);
+        }
+        h1 {
+            margin: 0;
+            font-size: 32px;
+            letter-spacing: 0.01em;
+        }
+        p { margin: 10px 0 0; color: var(--muted); line-height: 1.7; }
+        .actions {
+            margin-top: 26px;
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        a.btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            text-decoration: none;
+            border: 1px solid var(--line);
+            background: #fff;
+            color: var(--text);
+            border-radius: 10px;
+            padding: 10px 14px;
+            transition: transform .16s ease, box-shadow .16s ease;
+        }
+        a.btn.primary {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+        a.btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+        }
+        .meta {
+            margin-top: 24px;
+            font-size: 13px;
+            color: #64748b;
+        }
+    </style>
+</head>
+<body>
+    <main class="wrap">
+        <section class="card">
+            <h1>WeCom Homework Auto Tracker</h1>
+            <p>课程作业自动追踪与可视化看板项目主页。点击下方入口访问前端看板，或前往 GitHub 查看开源代码与使用文档。</p>
+            <div class="actions">
+                <a class="btn primary" href="../webapp/dist/index.html">打开看板</a>
+                <a class="btn" href="https://github.com/hicancan/wecom-homework-auto-tracker" target="_blank" rel="noreferrer">GitHub 仓库</a>
+            </div>
+            <div class="meta">提示：正式部署时建议以 webapp 目录构建产物作为站点根目录。</div>
+        </section>
+    </main>
+</body>
+</html>
