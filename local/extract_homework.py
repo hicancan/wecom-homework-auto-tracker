@@ -372,6 +372,28 @@ def format_datetime(value: Any) -> str:
     return pd.to_datetime(value).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def load_existing_course_homework_stats(
+    web_data_root: Path,
+    course_name: str,
+) -> dict[str, dict[str, Any]]:
+    course_filename = f"{sanitize_filename_component(course_name)}.json"
+    course_path = web_data_root / course_filename
+    if not course_path.exists():
+        return {}
+    try:
+        course_data = json.loads(course_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    stats = course_data.get("作业统计", {})
+    if not isinstance(stats, dict):
+        return {}
+    normalized: dict[str, dict[str, Any]] = {}
+    for key, value in stats.items():
+        if isinstance(key, str) and isinstance(value, dict):
+            normalized[key] = value
+    return normalized
+
+
 def make_homework_stat(
     df: pd.DataFrame,
     homework_label: str,
@@ -420,6 +442,7 @@ def make_homework_stat(
         class_students = students_by_class[class_name]
         submitted: list[str] = []
         not_submitted: list[str] = []
+        attachment_missing: list[str] = []
 
         for student in class_students:
             student_name = student["姓名"]
@@ -431,6 +454,7 @@ def make_homework_stat(
                 not_submitted.append(student_no)
                 continue
 
+            submitted.append(student_no)
             person_name = str(row[col_name])
             file_url = str(row[col_file])
             target_file = resolve_attachment_filename(
@@ -439,13 +463,13 @@ def make_homework_stat(
             )
 
             if not target_file:
-                print(f"  彻底未找到 [{person_name}] 的可用附件！")
-                not_submitted.append(student_no)
+                print(f"  [!] 已交但未匹配到附件: [{person_name}]")
+                attachment_missing.append(student_no)
                 continue
 
             if target_file not in files_in_dir:
-                print(f"[{person_name}] Excel指向文件 '{target_file}' 在同步目录不存在！")
-                not_submitted.append(student_no)
+                print(f"  [!] 已交但附件未同步: [{person_name}] -> '{target_file}'")
+                attachment_missing.append(student_no)
                 continue
 
             src_path = attachments_dir / target_file
@@ -453,7 +477,6 @@ def make_homework_stat(
             renamed = f"{student_no}{sanitize_filename_component(student_name)}{ext}"
             dst_path = homework_output_dir / class_name / renamed
             shutil.copy2(src_path, dst_path)
-            submitted.append(student_no)
 
         expected_count = len(class_students)
         submit_count = len(submitted)
@@ -467,6 +490,7 @@ def make_homework_stat(
             "提交率": round((submit_count / expected_count) if expected_count else 0, 4),
             "已交名单": submitted,
             "未交名单": not_submitted,
+            "已交但附件缺失名单": sorted(attachment_missing),
         }
 
     other_submitted: list[str] = []
@@ -474,12 +498,6 @@ def make_homework_stat(
         student_name_norm = student["姓名标准化"]
         row = latest_by_name.get(student_name_norm)
         if row is None:
-            continue
-        file_url = str(row[col_file])
-        target_file = resolve_attachment_filename(file_url=file_url, files_in_dir=files_in_dir)
-        if not target_file:
-            continue
-        if target_file not in files_in_dir:
             continue
         other_submitted.append(student["学号"])
     stat["其他已交名单"] = sorted(set(other_submitted))
@@ -557,6 +575,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--course", default="", help="课程名（默认自动检测，多个课程时必填）")
     parser.add_argument("--excel", default="", help="指定课程 Excel 路径，优先级高于 --course")
+    parser.add_argument("--from", dest="from_order", type=int, help="强制起始作业次序（包含）")
+    parser.add_argument("--to", dest="to_order", type=int, help="强制截止作业次序（包含）")
     parser.add_argument("--list-courses", action="store_true", help="仅列出 config 下可选课程")
     parser.add_argument("--courses-dir", default="", help="课程 Excel 所在目录（默认读取配置项 courses_dir）")
     parser.add_argument(
@@ -603,6 +623,13 @@ def main() -> None:
         for name, path in courses.items():
             print(f"- {name} -> {path}")
         return
+
+    if args.from_order is None or args.to_order is None:
+        raise ValueError("必须显式传入 --from 和 --to，禁止默认全量运行。")
+    if args.from_order <= 0 or args.to_order <= 0:
+        raise ValueError("--from 和 --to 必须是正整数。")
+    if args.from_order > args.to_order:
+        raise ValueError("--from 不能大于 --to。")
 
     course_name, excel_path = choose_course_excel(courses, args.course, args.excel)
 
@@ -682,40 +709,70 @@ def main() -> None:
         [x for x in df["_homework_label"].dropna().unique() if str(x).strip()],
         key=parse_homework_order,
     )
+    from_order = args.from_order
+    to_order = args.to_order
 
     course_out_dir = out_root / course_name
     course_out_dir.mkdir(parents=True, exist_ok=True)
     stats_dir = course_out_dir / "stats"
     stats_dir.mkdir(parents=True, exist_ok=True)
 
+    existing_stats = load_existing_course_homework_stats(web_data_root=web_data_root, course_name=course_name)
     all_stats: dict[str, dict[str, Any]] = {}
-
-    if not homework_labels:
-        print(">>> 该课程 Excel 暂无作业记录，将仅更新课程索引和空课程数据。")
-    else:
-        print(f">>> 检测到作业: {', '.join(homework_labels)}")
-        for hw in homework_labels:
-            print(f"\n>>> 开始处理 {course_name} {hw}")
-            hw_dir = course_out_dir / f"{hw}作业"
-            stat = make_homework_stat(
-                df=df,
-                homework_label=hw,
-                course_name=course_name,
-                col_name=col_name,
-                col_time=col_time,
-                col_file=col_file,
-                students_by_class=students_by_class,
-                other_students_by_name=other_students_by_name,
-                attachments_dir=attachments_dir,
-                homework_output_dir=hw_dir,
-            )
-            if stat is None:
-                continue
-
+    for hw, stat in existing_stats.items():
+        order = parse_homework_order(hw)
+        if order < from_order or order > to_order:
             all_stats[hw] = stat
-            hw_stat_file = stats_dir / f"{hw}.json"
-            hw_stat_file.write_text(json.dumps(stat, ensure_ascii=False, indent=2), encoding="utf-8")
-            print(f"√ 已输出: {hw_stat_file}")
+
+    print(f">>> 处理作业区间: 第{from_order}次 到 第{to_order}次")
+    if homework_labels:
+        print(f">>> Excel检测到作业: {', '.join(homework_labels)}")
+    else:
+        print(">>> 该课程 Excel 暂无作业记录，将仅保留区间外冻结数据。")
+
+    range_homework_labels = [
+        hw for hw in homework_labels if from_order <= parse_homework_order(hw) <= to_order
+    ]
+
+    for hw in range_homework_labels:
+        print(f"\n>>> 开始处理 {course_name} {hw}")
+        hw_dir = course_out_dir / f"{hw}作业"
+        stat = make_homework_stat(
+            df=df,
+            homework_label=hw,
+            course_name=course_name,
+            col_name=col_name,
+            col_time=col_time,
+            col_file=col_file,
+            students_by_class=students_by_class,
+            other_students_by_name=other_students_by_name,
+            attachments_dir=attachments_dir,
+            homework_output_dir=hw_dir,
+        )
+        if stat is None:
+            if hw in existing_stats:
+                print(f"  [!] {hw} 在Excel中无可用记录，保留历史统计。")
+                all_stats[hw] = existing_stats[hw]
+            else:
+                print(f"  [!] {hw} 在Excel中无可用记录，且无历史统计。")
+            continue
+
+        all_stats[hw] = stat
+        hw_stat_file = stats_dir / f"{hw}.json"
+        hw_stat_file.write_text(json.dumps(stat, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"√ 已输出: {hw_stat_file}")
+
+    in_range_existing_missing = [
+        hw
+        for hw in existing_stats.keys()
+        if from_order <= parse_homework_order(hw) <= to_order and hw not in range_homework_labels
+    ]
+    for hw in sorted(in_range_existing_missing, key=parse_homework_order):
+        print(f"  [!] {hw} 未出现在当前Excel中，保留历史统计。")
+        all_stats[hw] = existing_stats[hw]
+
+    if not all_stats:
+        print("  [!] 当前区间内外均无可用统计，输出将为空。")
 
     summary_path = course_out_dir / "course_summary.json"
     summary_data = {
