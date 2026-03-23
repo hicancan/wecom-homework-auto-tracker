@@ -13,9 +13,17 @@ type CourseIndex = {
 }
 
 function Home() {
+  const HOME_PAGE_URL = 'https://homeworkhicancan.top/'
   const [indexData, setIndexData] = useState<CourseIndex | null>(null)
   const [error, setError] = useState('')
+  const [shareFeedback, setShareFeedback] = useState('')
   const publicBase = import.meta.env.BASE_URL || '/'
+
+  useEffect(() => {
+    if (!shareFeedback) return
+    const timer = window.setTimeout(() => setShareFeedback(''), 2200)
+    return () => window.clearTimeout(timer)
+  }, [shareFeedback])
 
   useEffect(() => {
     fetch(`${publicBase}courses.json`)
@@ -34,6 +42,18 @@ function Home() {
       })
   }, [publicBase])
 
+  async function handleShareHomeLink() {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error('clipboard unavailable')
+      }
+      await navigator.clipboard.writeText(HOME_PAGE_URL)
+      setShareFeedback('主页链接已复制')
+    } catch {
+      setShareFeedback('复制失败，请手动复制主页链接')
+    }
+  }
+
   const deployTime = indexData?.最后部署时间 || indexData?.更新时间 || '加载中...'
   const courses = indexData?.课程列表 || []
 
@@ -43,28 +63,52 @@ function Home() {
         <header className="rounded-3xl border border-sky-100 bg-white/90 p-6 shadow-[0_30px_80px_rgba(14,116,144,0.12)] backdrop-blur md:p-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h1 className="text-2xl font-bold md:text-4xl">课程作业追踪看板</h1>
-            <a
-              href="https://github.com/hicancan/wecom-homework-auto-tracker"
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                className="h-4 w-4"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-end">
+              <button
+                type="button"
+                onClick={handleShareHomeLink}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-teal-200 bg-teal-50 px-3 py-2 text-sm font-medium text-teal-800 transition hover:bg-teal-100 sm:w-auto"
               >
-                <path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.21.68-.48v-1.69c-2.78.61-3.37-1.34-3.37-1.34-.46-1.16-1.11-1.48-1.11-1.48-.91-.62.07-.61.07-.61 1.01.07 1.54 1.04 1.54 1.04.89 1.54 2.34 1.09 2.91.84.09-.65.35-1.09.63-1.34-2.22-.26-4.56-1.12-4.56-4.96 0-1.1.39-2 1.03-2.7-.1-.25-.45-1.29.1-2.67 0 0 .84-.27 2.75 1.03A9.55 9.55 0 0 1 12 6.84c.85 0 1.71.12 2.51.36 1.9-1.3 2.75-1.03 2.75-1.03.55 1.38.2 2.42.1 2.67.64.7 1.03 1.6 1.03 2.7 0 3.85-2.34 4.7-4.57 4.96.36.31.67.91.67 1.84v2.73c0 .27.18.58.69.48A10 10 0 0 0 12 2z" />
-              </svg>
-              GitHub
-            </a>
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-4 w-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <path d="M8.5 12a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" />
+                  <path d="M15.5 19a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" />
+                  <path d="M8 9.5l7 5" />
+                </svg>
+                分享主页链接
+              </button>
+              <a
+                href="https://github.com/hicancan/wecom-homework-auto-tracker"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 sm:w-auto"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-4 w-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.21.68-.48v-1.69c-2.78.61-3.37-1.34-3.37-1.34-.46-1.16-1.11-1.48-1.11-1.48-.91-.62.07-.61.07-.61 1.01.07 1.54 1.04 1.54 1.04.89 1.54 2.34 1.09 2.91.84.09-.65.35-1.09.63-1.34-2.22-.26-4.56-1.12-4.56-4.96 0-1.1.39-2 1.03-2.7-.1-.25-.45-1.29.1-2.67 0 0 .84-.27 2.75 1.03A9.55 9.55 0 0 1 12 6.84c.85 0 1.71.12 2.51.36 1.9-1.3 2.75-1.03 2.75-1.03.55 1.38.2 2.42.1 2.67.64.7 1.03 1.6 1.03 2.7 0 3.85-2.34 4.7-4.57 4.96.36.31.67.91.67 1.84v2.73c0 .27.18.58.69.48A10 10 0 0 0 12 2z" />
+                </svg>
+                GitHub
+              </a>
+            </div>
           </div>
           <p className="mt-3 text-sm text-slate-600">网页最后部署时间：{deployTime}</p>
+          {shareFeedback && <p className="mt-2 text-xs text-slate-500">{shareFeedback}</p>}
           <p className="mt-2 text-sm text-slate-600">请选择课程进入看板，路由将保持可分享的课程链接。</p>
         </header>
 

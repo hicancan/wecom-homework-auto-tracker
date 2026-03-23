@@ -191,7 +191,6 @@ function DonutChart({ rate, size = 116, label, color = '#0284c7' }: DonutProps) 
 }
 
 function App() {
-  const HOME_PAGE_URL = 'https://homeworkhicancan.top/'
   const navigate = useNavigate()
   const { courseName = '' } = useParams()
   const [searchParams] = useSearchParams()
@@ -329,18 +328,6 @@ function App() {
     }
   }
 
-  async function handleShareHomeLink() {
-    try {
-      if (!navigator.clipboard?.writeText) {
-        throw new Error('clipboard unavailable')
-      }
-      await navigator.clipboard.writeText(HOME_PAGE_URL)
-      setShareFeedback('主页链接已复制')
-    } catch {
-      setShareFeedback('复制失败，请手动复制主页链接')
-    }
-  }
-
   const homeworkKeys = useMemo(() => {
     if (!courseData) return []
     return Object.keys(courseData.作业统计 || {}).sort(
@@ -400,14 +387,6 @@ function App() {
               <h1 className="mt-2 text-2xl font-bold text-slate-900 md:text-4xl">课程作业提交看板</h1>
             </div>
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-end">
-              <button
-                type="button"
-                onClick={handleShareHomeLink}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-teal-200 bg-teal-50 px-3 py-2 text-sm font-medium text-teal-800 transition hover:bg-teal-100 sm:w-auto"
-              >
-                <AppIcon name="share" className="h-4 w-4" />
-                分享主页链接
-              </button>
               <button
                 type="button"
                 onClick={handleShareLink}
