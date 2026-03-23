@@ -191,6 +191,7 @@ function DonutChart({ rate, size = 116, label, color = '#0284c7' }: DonutProps) 
 }
 
 function App() {
+  const HOME_PAGE_URL = 'https://homeworkhicancan.top/'
   const navigate = useNavigate()
   const { courseName = '' } = useParams()
   const [searchParams] = useSearchParams()
@@ -292,7 +293,9 @@ function App() {
   }, [indexData, publicBase, routeError, routeHomework, selectedCourse])
 
   useEffect(() => {
-    if (!selectedCourse || routeError) return
+    // Only sync URL after the selected course data is loaded,
+    // so we don't carry a stale homework key across course switches.
+    if (!selectedCourse || routeError || !courseData || courseData.课程 !== selectedCourse) return
     const nextPathname = `/course/${encodeURIComponent(selectedCourse)}`
     const nextSearchParams = new URLSearchParams()
     if (selectedKey) {
@@ -310,7 +313,7 @@ function App() {
         { replace: true },
       )
     }
-  }, [navigate, routeCourse, routeError, searchParams, selectedCourse, selectedKey])
+  }, [courseData, navigate, routeCourse, routeError, searchParams, selectedCourse, selectedKey])
 
   async function handleShareLink() {
     if (!selectedCourse || routeError) return
@@ -323,6 +326,18 @@ function App() {
       setShareFeedback('分享链接已复制')
     } catch {
       setShareFeedback('复制失败，请手动复制地址栏链接')
+    }
+  }
+
+  async function handleShareHomeLink() {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error('clipboard unavailable')
+      }
+      await navigator.clipboard.writeText(HOME_PAGE_URL)
+      setShareFeedback('主页链接已复制')
+    } catch {
+      setShareFeedback('复制失败，请手动复制主页链接')
     }
   }
 
@@ -379,17 +394,25 @@ function App() {
     <main className="min-h-screen text-slate-900">
       <div className="mx-auto max-w-7xl px-4 py-8 md:px-6 md:py-12">
         <header className="animate-rise rounded-3xl border border-sky-100 bg-gradient-to-br from-white/95 via-sky-50/90 to-teal-50/90 p-6 shadow-[0_30px_80px_rgba(14,116,144,0.12)] backdrop-blur md:p-8">
-          <div className="flex items-start justify-between gap-4">
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div>
               <p className="text-xs uppercase tracking-[0.28em] text-sky-700">Education Analytics</p>
               <h1 className="mt-2 text-2xl font-bold text-slate-900 md:text-4xl">课程作业提交看板</h1>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-end">
+              <button
+                type="button"
+                onClick={handleShareHomeLink}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-teal-200 bg-teal-50 px-3 py-2 text-sm font-medium text-teal-800 transition hover:bg-teal-100 sm:w-auto"
+              >
+                <AppIcon name="share" className="h-4 w-4" />
+                分享主页链接
+              </button>
               <button
                 type="button"
                 onClick={handleShareLink}
                 disabled={!canInteract}
-                className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-800 transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-800 transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
               >
                 <AppIcon name="share" className="h-4 w-4" />
                 分享当前课程链接
@@ -398,7 +421,7 @@ function App() {
                 href="https://github.com/hicancan/wecom-homework-auto-tracker"
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 sm:w-auto"
                 aria-label="GitHub 仓库"
               >
                 <AppIcon name="github" className="h-4 w-4" />
@@ -425,6 +448,9 @@ function App() {
                 value={selectedCourse}
                 onChange={(e) => {
                   const nextCourse = e.target.value
+                  // Reset stale homework state before route switch.
+                  setRouteError('')
+                  setSelectedKey('')
                   navigate({ pathname: `/course/${encodeURIComponent(nextCourse)}`, search: '' }, { replace: false })
                 }}
                 disabled={!courseList.length}
