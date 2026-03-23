@@ -27,7 +27,6 @@
 ```text
 local/                 # Python 数据提取脚本
 webapp/                # React + Vite 前端看板
-web/                   # 静态主页
 config/                # 本地配置目录（默认不入库，仅保留模板）
 out/                   # 本地输出目录（不入库）
 ```
