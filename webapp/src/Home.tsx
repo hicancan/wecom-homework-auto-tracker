@@ -1,20 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-
-type CourseItem = {
-  课程: string
-  数据文件: string
-}
-
-type CourseIndex = {
-  更新时间?: string
-  最后部署时间?: string
-  课程列表: CourseItem[]
-}
+import { type CourseIndex, type CourseManifest, loadCourseIndex } from './courseIndexLoader'
 
 function Home() {
   const HOME_PAGE_URL = 'https://homework.hicancan.top/'
   const [indexData, setIndexData] = useState<CourseIndex | null>(null)
+  const [manifestData, setManifestData] = useState<CourseManifest | null>(null)
   const [error, setError] = useState('')
   const [shareFeedback, setShareFeedback] = useState('')
   const publicBase = import.meta.env.BASE_URL || '/'
@@ -26,20 +17,23 @@ function Home() {
   }, [shareFeedback])
 
   useEffect(() => {
-    fetch(`${publicBase}courses.json`)
-      .then((res) => {
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`)
-        }
-        return res.json() as Promise<CourseIndex>
-      })
-      .then((json) => {
-        setIndexData(json)
+    let active = true
+    loadCourseIndex(publicBase)
+      .then(({ manifest, index }) => {
+        if (!active) return
+        setManifestData(manifest)
+        setIndexData(index)
         setError('')
       })
       .catch((e: unknown) => {
+        if (!active) return
+        setManifestData(null)
+        setIndexData(null)
         setError(e instanceof Error ? e.message : '加载失败')
       })
+    return () => {
+      active = false
+    }
   }, [publicBase])
 
   async function handleShareHomeLink() {
@@ -54,7 +48,12 @@ function Home() {
     }
   }
 
-  const deployTime = indexData?.最后部署时间 || indexData?.更新时间 || '加载中...'
+  const deployTime =
+    manifestData?.最后部署时间 ||
+    indexData?.最后部署时间 ||
+    manifestData?.更新时间 ||
+    indexData?.更新时间 ||
+    '加载中...'
   const courses = indexData?.课程列表 || []
 
   return (

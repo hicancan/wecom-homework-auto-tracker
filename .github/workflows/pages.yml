@@ -75,6 +75,9 @@ jobs:
             data_path.write_text(json.dumps(course_data, ensure_ascii=False, indent=2), encoding="utf-8")
           PY
 
+      - name: Build course manifest
+        run: python3 local/build_course_manifest.py --public-root webapp/public --course-index webapp/public/courses.json
+
       - name: Install dependencies
         working-directory: webapp
         run: npm ci

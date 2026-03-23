@@ -18,6 +18,7 @@ from urllib.parse import unquote, urlparse
 
 import pandas as pd
 import requests
+from course_manifest import rebuild_course_manifest
 
 
 def load_local_config(config_path: Path) -> dict[str, Any]:
@@ -652,6 +653,10 @@ def main() -> None:
         course_name=course_name,
         homework_stats=all_stats,
     )
+    manifest_result = rebuild_course_manifest(
+        public_root=course_index_path.parent,
+        course_index_path=course_index_path,
+    )
 
     print("\n处理完成！")
     print(f"- 课程输出目录: {course_out_dir}")
@@ -659,6 +664,8 @@ def main() -> None:
     print(f"- 课程汇总: {summary_path}")
     print(f"- web 课程数据: {web_data_root / (sanitize_filename_component(course_name) + '.json')}")
     print(f"- web 课程索引: {course_index_path}")
+    print(f"- web manifest: {manifest_result['manifest_file']}")
+    print(f"- web 哈希索引: {manifest_result['index_file']}")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import {
+  type CourseIndex,
+  type CourseItem,
+  type CourseManifest,
+  loadCourseIndex,
+} from './courseIndexLoader'
 
 type ClassStat = {
   应交人数: number
@@ -30,17 +36,6 @@ type CourseData = {
   作业统计: Record<string, HomeworkStat>
 }
 
-type CourseItem = {
-  课程: string
-  数据文件: string
-}
-
-type CourseIndex = {
-  更新时间?: string
-  最后部署时间?: string
-  课程列表: CourseItem[]
-}
-
 function parseHomeworkOrder(text: string): number {
   const match = text.match(/(\d+)/)
   return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER
@@ -69,6 +64,11 @@ function safeDecodeURIComponent(value: string): string {
 
 function buildCoursePath(courseName: string): string {
   return `/course/${encodeURIComponent(courseName)}`
+}
+
+function joinPublicPath(publicBase: string, relativePath: string): string {
+  const base = publicBase.endsWith('/') ? publicBase : `${publicBase}/`
+  return `${base}${relativePath}`
 }
 
 type DonutProps = {
@@ -219,6 +219,7 @@ function App() {
   const routeHomework = safeDecodeURIComponent(searchParams.get('hw') || '')
   const publicBase = import.meta.env.BASE_URL || '/'
 
+  const [manifestData, setManifestData] = useState<CourseManifest | null>(null)
   const [indexData, setIndexData] = useState<CourseIndex | null>(null)
   const [courseData, setCourseData] = useState<CourseData | null>(null)
   const [isCourseLoading, setIsCourseLoading] = useState(false)
@@ -233,24 +234,23 @@ function App() {
   }, [shareFeedback])
 
   useEffect(() => {
-    fetch(`${publicBase}courses.json`)
-      .then((res) => {
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`)
-        }
-        return res.json() as Promise<CourseIndex>
-      })
-      .then((json) => {
-        if (!(json.课程列表 || []).length) {
-          throw new Error('courses.json 中没有可用课程数据')
-        }
+    let active = true
+    loadCourseIndex(publicBase)
+      .then(({ manifest, index }) => {
+        if (!active) return
+        setManifestData(manifest)
+        setIndexData(index)
         setIndexError('')
-        setIndexData(json)
       })
       .catch((e: unknown) => {
+        if (!active) return
+        setManifestData(null)
         setIndexData(null)
         setIndexError(e instanceof Error ? e.message : '加载失败')
       })
+    return () => {
+      active = false
+    }
   }, [publicBase])
 
   const courseMap = useMemo(() => {
@@ -282,7 +282,7 @@ function App() {
     setCourseData(null)
     setCourseError('')
 
-    fetch(`${publicBase}${item.数据文件}`, { signal: controller.signal })
+    fetch(joinPublicPath(publicBase, item.数据文件), { signal: controller.signal })
       .then((res) => {
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`)
@@ -401,8 +401,10 @@ function App() {
 
   const deployTime =
     courseData?.最后部署时间 ||
+    manifestData?.最后部署时间 ||
     indexData?.最后部署时间 ||
     courseData?.更新时间 ||
+    manifestData?.更新时间 ||
     indexData?.更新时间 ||
     '加载中...'
 
