@@ -13,7 +13,7 @@ type CourseIndex = {
 }
 
 function Home() {
-  const HOME_PAGE_URL = 'https://homeworkhicancan.top/'
+  const HOME_PAGE_URL = 'https://homework.hicancan.top/'
   const [indexData, setIndexData] = useState<CourseIndex | null>(null)
   const [error, setError] = useState('')
   const [shareFeedback, setShareFeedback] = useState('')

@@ -428,7 +428,7 @@ function App() {
                 分享当前课程链接
               </button>
               <a
-                href="https://homeworkhicancan.top/"
+                href="https://homework.hicancan.top/"
                 className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 transition hover:bg-emerald-100 sm:w-auto"
                 aria-label="返回主页"
               >
