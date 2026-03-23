@@ -343,6 +343,29 @@ function App() {
     return (indexData.课程列表 || []).map((item) => item.课程)
   }, [indexData])
 
+  const classEntries = useMemo(() => {
+    if (!selected) return [] as Array<[string, ClassStat]>
+    return Object.entries(selected.班级统计).sort(([a], [b]) => a.localeCompare(b))
+  }, [selected])
+
+  const aggregate = useMemo(() => {
+    return classEntries.reduce(
+      (acc, [, stat]) => {
+        acc.expected += stat.应交人数
+        acc.submitted += stat.已交人数
+        acc.missing += stat.未交人数
+        return acc
+      },
+      { expected: 0, submitted: 0, missing: 0 },
+    )
+  }, [classEntries])
+
+  const aggregateRate = aggregate.expected ? aggregate.submitted / aggregate.expected : 0
+  const summaryExpected = aggregate.expected
+  const summarySubmitted = aggregate.submitted
+  const summaryMissing = aggregate.missing
+  const summaryRate = aggregateRate
+
   const deployTime =
     courseData?.最后部署时间 ||
     indexData?.最后部署时间 ||
@@ -454,15 +477,15 @@ function App() {
                   应交 / 已交 / 未交
                 </p>
                 <p className="mt-1 text-xl font-semibold tracking-tight text-slate-800">
-                  {selected?.汇总?.应交总人数 ?? '-'} / {selected?.汇总?.已交总人数 ?? '-'} / {selected?.汇总?.未交总人数 ?? '-'}
+                  {summaryExpected} / {summarySubmitted} / {summaryMissing}
                 </p>
                 <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-emerald-100">
                   <div
                     className="h-full rounded-full bg-emerald-500 transition-all"
-                    style={{ width: `${((selected?.汇总?.总提交率 ?? 0) * 100).toFixed(2)}%` }}
+                    style={{ width: `${(summaryRate * 100).toFixed(2)}%` }}
                   />
                 </div>
-                <p className="mt-2 text-xs text-emerald-700">提交进度 {(selected?.汇总?.总提交率 ? (selected.汇总.总提交率 * 100).toFixed(2) : '0.00')}%</p>
+                <p className="mt-2 text-xs text-emerald-700">提交进度 {(summaryRate * 100).toFixed(2)}%</p>
               </div>
             </div>
             <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 lg:sticky lg:top-4">
@@ -472,7 +495,7 @@ function App() {
               </p>
               <div className="mt-3 flex items-center justify-center">
                 <DonutChart
-                  rate={selected?.汇总?.总提交率 ?? 0}
+                  rate={summaryRate}
                   size={148}
                   label="已交 vs 未交"
                   color="#0ea5e9"
@@ -496,9 +519,7 @@ function App() {
 
         <section className="mt-6 grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-4">
           {selected &&
-            Object.entries(selected.班级统计)
-              .sort(([a], [b]) => a.localeCompare(b))
-              .map(([className, classStat]) => (
+            classEntries.map(([className, classStat]) => (
                 <article key={className} className="animate-rise rounded-2xl border border-sky-100 bg-white/95 p-4 shadow-[0_20px_45px_rgba(14,165,233,0.1)] backdrop-blur">
                   <div className="mb-3 flex items-end justify-between border-b border-slate-100 pb-2">
                     <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900">

@@ -5,5 +5,16 @@
   "students": "config/students.json",
   "out_root": "out",
   "web_data_root": "webapp/public/data",
-  "course_index": "webapp/public/courses.json"
+  "course_index": "webapp/public/courses.json",
+  "course_classes": {
+    "示例课程名": {
+      "classes": [
+        "B240401",
+        "B240402"
+      ],
+      "source": "auto",
+      "lock": false,
+      "detected_at": "2026-03-23 00:00:00"
+    }
+  }
 }

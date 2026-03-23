@@ -32,6 +32,11 @@ def load_local_config(config_path: Path) -> dict[str, Any]:
     return data
 
 
+def save_local_config(config_path: Path, cfg: dict[str, Any]) -> None:
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def pick_setting(cli_value: str, cfg: dict[str, Any], key: str, fallback: str = "") -> str:
     if str(cli_value).strip():
         return str(cli_value).strip()
@@ -198,6 +203,97 @@ def load_students(students_json_path: Path) -> tuple[dict[str, list[dict[str, st
         by_name[name_norm] = student
 
     return by_class, by_name
+
+
+def detect_classes_from_excel(
+    df: pd.DataFrame,
+    col_name: str,
+    students_by_name: dict[str, dict[str, str]],
+) -> list[str]:
+    classes: set[str] = set()
+    for raw_name in df[col_name].dropna().astype(str).tolist():
+        student = students_by_name.get(normalize_name(raw_name))
+        if student:
+            classes.add(student["班级"])
+    return sorted(classes)
+
+
+def normalize_class_list(values: Any) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    output: list[str] = []
+    for value in values:
+        text = str(value).strip()
+        if text:
+            output.append(text)
+    # Keep order deterministic while deduplicating.
+    return sorted(set(output))
+
+
+def resolve_course_classes(
+    local_cfg: dict[str, Any],
+    course_name: str,
+    detected_classes: list[str],
+) -> tuple[list[str], bool]:
+    changed = False
+
+    course_classes = local_cfg.get("course_classes")
+    if not isinstance(course_classes, dict):
+        course_classes = {}
+        local_cfg["course_classes"] = course_classes
+        changed = True
+
+    entry = course_classes.get(course_name)
+    locked = False
+    configured_classes: list[str] = []
+
+    if isinstance(entry, list):
+        configured_classes = normalize_class_list(entry)
+    elif isinstance(entry, dict):
+        configured_classes = normalize_class_list(entry.get("classes"))
+        locked = bool(entry.get("lock", False))
+
+    if locked and configured_classes:
+        return configured_classes, changed
+
+    if detected_classes:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        next_entry = {
+            "classes": detected_classes,
+            "source": "auto",
+            "lock": locked,
+            "detected_at": now,
+        }
+        if entry != next_entry:
+            course_classes[course_name] = next_entry
+            changed = True
+        return detected_classes, changed
+
+    if configured_classes:
+        return configured_classes, changed
+
+    raise ValueError(
+        f"无法自动识别课程 {course_name} 的班级，且配置中没有可用 classes。"
+        "请先运行一次包含有效提交记录的数据，或手工在 local.config.json 填写 classes。"
+    )
+
+
+def scope_students_by_classes(
+    students_by_class: dict[str, list[dict[str, str]]],
+    target_classes: list[str],
+) -> dict[str, list[dict[str, str]]]:
+    missing = [class_name for class_name in target_classes if class_name not in students_by_class]
+    if missing:
+        print(f"[!] 学生名单缺少班级: {', '.join(missing)}")
+
+    scoped = {
+        class_name: students_by_class[class_name]
+        for class_name in target_classes
+        if class_name in students_by_class
+    }
+    if not scoped:
+        raise ValueError("课程班级在学生名单中全部缺失，无法统计。")
+    return scoped
 
 
 def resolve_attachment_filename(
@@ -480,7 +576,7 @@ def main() -> None:
     print(f">>> Excel: {excel_path}")
     print(f">>> 附件目录: {attachments_dir}")
 
-    students_by_class, _ = load_students(students_path)
+    students_by_class, students_by_name = load_students(students_path)
     if not students_by_class:
         raise ValueError("学生名单为空，无法统计提交情况。")
 
@@ -492,6 +588,14 @@ def main() -> None:
 
     if not all([col_name, col_time, col_hw, col_file]):
         raise ValueError("无法在Excel中找到需要的列，请检查文件内容。")
+
+    detected_classes = detect_classes_from_excel(df, col_name, students_by_name)
+    target_classes, cfg_changed = resolve_course_classes(local_cfg, course_name, detected_classes)
+    students_by_class = scope_students_by_classes(students_by_class, target_classes)
+    print(f">>> 统计班级: {', '.join(sorted(students_by_class.keys()))}")
+    if cfg_changed:
+        save_local_config(local_config_path, local_cfg)
+        print(f">>> 已自动更新课程班级配置: {local_config_path}")
 
     df = df.copy()
     df["_homework_label"] = df[col_hw].astype(str).map(normalize_homework_label)

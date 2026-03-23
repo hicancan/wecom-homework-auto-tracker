@@ -6,3 +6,5 @@ out/
 .venv/
 config/*
 !config/config.template.json
+config/**/*.xlsx
+config/**/*.xls
