@@ -78,7 +78,7 @@ type DonutProps = {
   color?: string
 }
 
-type IconName = 'book' | 'hash' | 'clock' | 'list' | 'donut' | 'users' | 'warn' | 'trend' | 'share' | 'github'
+type IconName = 'book' | 'hash' | 'clock' | 'list' | 'donut' | 'users' | 'warn' | 'trend' | 'share' | 'github' | 'home'
 
 function AppIcon({ name, className = 'h-4 w-4' }: { name: IconName; className?: string }) {
   const common = {
@@ -164,6 +164,15 @@ function AppIcon({ name, className = 'h-4 w-4' }: { name: IconName; className?: 
     return (
       <svg {...common}>
         <path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.21.68-.48v-1.69c-2.78.61-3.37-1.34-3.37-1.34-.46-1.16-1.11-1.48-1.11-1.48-.91-.62.07-.61.07-.61 1.01.07 1.54 1.04 1.54 1.04.89 1.54 2.34 1.09 2.91.84.09-.65.35-1.09.63-1.34-2.22-.26-4.56-1.12-4.56-4.96 0-1.1.39-2 1.03-2.7-.1-.25-.45-1.29.1-2.67 0 0 .84-.27 2.75 1.03A9.55 9.55 0 0 1 12 6.84c.85 0 1.71.12 2.51.36 1.9-1.3 2.75-1.03 2.75-1.03.55 1.38.2 2.42.1 2.67.64.7 1.03 1.6 1.03 2.7 0 3.85-2.34 4.7-4.57 4.96.36.31.67.91.67 1.84v2.73c0 .27.18.58.69.48A10 10 0 0 0 12 2z" />
+      </svg>
+    )
+  }
+  if (name === 'home') {
+    return (
+      <svg {...common}>
+        <path d="M3 11.5 12 4l9 7.5" />
+        <path d="M5 10.5V20h14v-9.5" />
+        <path d="M10 20v-5h4v5" />
       </svg>
     )
   }
@@ -418,6 +427,14 @@ function App() {
                 <AppIcon name="share" className="h-4 w-4" />
                 分享当前课程链接
               </button>
+              <a
+                href="https://homeworkhicancan.top/"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 transition hover:bg-emerald-100 sm:w-auto"
+                aria-label="返回主页"
+              >
+                <AppIcon name="home" className="h-4 w-4" />
+                返回主页
+              </a>
               <a
                 href="https://github.com/hicancan/wecom-homework-auto-tracker"
                 target="_blank"
