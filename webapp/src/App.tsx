@@ -384,20 +384,32 @@ function App() {
               <p className="text-xs uppercase tracking-[0.28em] text-sky-700">Education Analytics</p>
               <h1 className="mt-2 text-2xl font-bold text-slate-900 md:text-4xl">课程作业提交看板</h1>
             </div>
-            <a
-              href="https://github.com/hicancan/wecom-homework-auto-tracker"
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100"
-              aria-label="GitHub 仓库"
-            >
-              <AppIcon name="github" className="h-4 w-4" />
-              GitHub
-            </a>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleShareLink}
+                disabled={!canInteract}
+                className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-800 transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <AppIcon name="share" className="h-4 w-4" />
+                分享当前课程链接
+              </button>
+              <a
+                href="https://github.com/hicancan/wecom-homework-auto-tracker"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100"
+                aria-label="GitHub 仓库"
+              >
+                <AppIcon name="github" className="h-4 w-4" />
+                GitHub
+              </a>
+            </div>
           </div>
           <p className="mt-3 text-sm text-slate-600">
             网页最后部署时间：{deployTime}
           </p>
+          {shareFeedback && <p className="mt-2 text-xs text-slate-500">{shareFeedback}</p>}
         </header>
 
         <section className="animate-rise-delayed mt-6 rounded-3xl border border-sky-100 bg-white/90 p-4 shadow-[0_20px_60px_rgba(2,132,199,0.12)] backdrop-blur md:p-5">
@@ -447,19 +459,6 @@ function App() {
                 ))}
               </select>
             </div>
-          </div>
-
-          <div className="mt-3 flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={handleShareLink}
-              disabled={!canInteract}
-              className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-800 transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <AppIcon name="share" className="h-4 w-4" />
-              分享当前课程链接
-            </button>
-            {shareFeedback && <p className="text-xs text-slate-500">{shareFeedback}</p>}
           </div>
 
           <div className="mt-4 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -541,6 +540,7 @@ function App() {
                       <p className="text-base font-semibold text-teal-700">{(classStat.提交率 * 100).toFixed(2)}%</p>
                     </div>
                   </div>
+                  <p className="mb-2 text-xs font-medium text-slate-500">未提交的学号名单</p>
                   <ul className="space-y-2 text-sm">
                     {classStat.未交名单.length ? (
                       classStat.未交名单.map((name) => (
