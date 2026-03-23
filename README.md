@@ -125,7 +125,7 @@ Copy-Item .\config\config.template.json .\config\local.config.json
 我们提供了一个友好的交互式脚本，协助你轻松提取指定轮次的作业数据：
 
 ```powershell
-pwsh -File .\scripts\run_extract_interactive.ps1
+.\scripts\run_extract_interactive.cmd
 ```
 
 **交互式脚本将带你完成：**
@@ -133,6 +133,13 @@ pwsh -File .\scripts\run_extract_interactive.ps1
 2. 让你轻松勾选一个或多个课程（支持输入 `1,2` / `1，2` / `1-3` / `all`）。
 3. 循环让你输入需要处理的作业批次区间 (`--from` 和 `--to`)。
 4. 在正式执行前展示参数总览，供你做最后确认。
+5. 全部成功后自动执行 `git commit + git push`（仅提交 `webapp/public`）。
+
+如需只跑提取、不自动推送：
+
+```powershell
+.\scripts\run_extract_interactive.cmd --no-auto-push
+```
 
 <details>
 <summary>💡 如果你想使用纯命令行执行（Direct CLI），点击这里展开：</summary>

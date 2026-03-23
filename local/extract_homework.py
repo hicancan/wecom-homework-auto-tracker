@@ -345,7 +345,7 @@ def scope_students_by_classes(
 def resolve_attachment_filename(
     file_url: str,
     files_in_dir: list[str],
-) -> str:
+) -> tuple[str, list[str]]:
     candidates: list[str] = []
 
     title_name = get_exact_filename_from_url(file_url)
@@ -354,16 +354,20 @@ def resolve_attachment_filename(
 
     if file_url.startswith("http"):
         path_name = unquote(os.path.basename(urlparse(file_url).path or "")).strip()
-        if path_name:
+        if (
+            path_name
+            and path_name.lower() not in {"s", "file", "download"}
+            and (len(path_name) > 3 or "." in path_name)
+        ):
             candidates.append(path_name)
     elif file_url:
         candidates.append(file_url.strip())
 
     for candidate in candidates:
         if candidate in files_in_dir:
-            return candidate
+            return candidate, candidates
 
-    return ""
+    return "", candidates
 
 
 def format_datetime(value: Any) -> str:
@@ -423,6 +427,34 @@ def write_missing_attachment_report(
             lines.append(f"- {class_name}")
             for student_no in by_class[class_name]:
                 lines.append(f"  - {student_no}")
+    lines.extend(
+        [
+            "",
+            "详细信息：",
+        ]
+    )
+    details = stat.get("附件缺失详情", [])
+    if isinstance(details, list) and details:
+        for row in details:
+            if not isinstance(row, dict):
+                continue
+            cls = str(row.get("班级", "")).strip()
+            student_no = str(row.get("学号", "")).strip()
+            name = str(row.get("姓名", "")).strip()
+            raw_field = str(row.get("原始上传字段", "")).strip()
+            candidate_names = row.get("候选附件名", [])
+            candidates_text = (
+                " | ".join(str(x) for x in candidate_names if str(x).strip())
+                if isinstance(candidate_names, list)
+                else ""
+            )
+            lines.append(f"- {cls} {student_no} {name}".strip())
+            if candidates_text:
+                lines.append(f"  候选附件名: {candidates_text}")
+            if raw_field:
+                lines.append(f"  原始上传字段: {raw_field}")
+    else:
+        lines.append("- 无")
     lines.extend(
         [
             "",
@@ -515,6 +547,7 @@ def make_homework_stat(
 
     total_submit = 0
     total_expected = 0
+    attachment_missing_details: list[dict[str, Any]] = []
 
     for class_name in all_classes:
         class_students = students_by_class[class_name]
@@ -535,19 +568,41 @@ def make_homework_stat(
             submitted.append(student_no)
             person_name = str(row[col_name])
             file_url = str(row[col_file])
-            target_file = resolve_attachment_filename(
+            target_file, candidate_files = resolve_attachment_filename(
                 file_url=file_url,
                 files_in_dir=files_in_dir,
             )
 
             if not target_file:
-                print(f"  [!] 已交但未匹配到附件: [{person_name}]")
+                print(f"  [!] 已交但未匹配到附件: [{person_name}/{student_no}]")
+                if candidate_files:
+                    print(f"      候选附件名: {' | '.join(candidate_files)}")
+                if file_url.strip():
+                    print(f"      原始上传字段: {file_url}")
                 attachment_missing.append(student_no)
+                attachment_missing_details.append(
+                    {
+                        "班级": class_name,
+                        "学号": student_no,
+                        "姓名": person_name,
+                        "候选附件名": candidate_files,
+                        "原始上传字段": file_url,
+                    }
+                )
                 continue
 
             if target_file not in files_in_dir:
                 print(f"  [!] 已交但附件未同步: [{person_name}] -> '{target_file}'")
                 attachment_missing.append(student_no)
+                attachment_missing_details.append(
+                    {
+                        "班级": class_name,
+                        "学号": student_no,
+                        "姓名": person_name,
+                        "候选附件名": [target_file],
+                        "原始上传字段": file_url,
+                    }
+                )
                 continue
 
             src_path = attachments_dir / target_file
@@ -587,6 +642,8 @@ def make_homework_stat(
         "总提交率": round((total_submit / total_expected) if total_expected else 0, 4),
     }
     stat["附件缺失"] = build_missing_attachment_summary(stat)
+    if attachment_missing_details:
+        stat["附件缺失详情"] = attachment_missing_details
     return stat
 
 
@@ -615,6 +672,8 @@ def write_course_web_data(
 
         hw_relative_path = f"data/{hw_filename}"
         hw_payload = dict(hw_stat)
+        # 保持前端公开数据最小化：缺失详情仅用于本地排障，不对外发布。
+        hw_payload.pop("附件缺失详情", None)
         hw_payload.setdefault("作业", hw_label)
         hw_payload.setdefault("课程", course_name)
         hw_payload["更新时间"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -885,6 +944,24 @@ def main() -> None:
             missing_attachment_reports.append((hw, missing_report_path, missing_total))
             print(f"  [!] {hw} 检测到附件缺失 {missing_total} 人")
             print(f"  [!] 缺失报告: {missing_report_path}")
+            details = stat.get("附件缺失详情", [])
+            if isinstance(details, list):
+                for row in details:
+                    if not isinstance(row, dict):
+                        continue
+                    cls = str(row.get("班级", "")).strip()
+                    student_no = str(row.get("学号", "")).strip()
+                    name = str(row.get("姓名", "")).strip()
+                    candidate_names = row.get("候选附件名", [])
+                    candidates_text = (
+                        " | ".join(str(x) for x in candidate_names if str(x).strip())
+                        if isinstance(candidate_names, list)
+                        else ""
+                    )
+                    detail_line = f"      - {cls} {student_no} {name}".rstrip()
+                    if candidates_text:
+                        detail_line += f" | 候选附件: {candidates_text}"
+                    print(detail_line)
             print("  [!] 请先同步企业微信微盘，再重跑该课程区间。")
 
     in_range_existing_missing = [
