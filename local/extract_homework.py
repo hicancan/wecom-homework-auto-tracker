@@ -171,13 +171,30 @@ def find_attachments_dir(course_name: str, attachments_root: Path, attachments_d
     raise FileNotFoundError(f"未在 {attachments_root} 下找到课程 '{course_name}' 对应目录")
 
 
-def load_students(students_json_path: Path) -> tuple[dict[str, list[dict[str, str]]], dict[str, dict[str, str]]]:
+def load_students_file(students_json_path: Path, label: str) -> list[dict[str, Any]]:
     if not students_json_path.exists():
-        raise FileNotFoundError(f"找不到学生名单文件: {students_json_path}")
+        raise FileNotFoundError(f"找不到{label}文件: {students_json_path}")
+    try:
+        students = json.loads(students_json_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as err:
+        raise ValueError(f"{label} JSON 解析失败: {students_json_path}: {err}") from err
+    if not isinstance(students, list):
+        raise ValueError(f"{label}格式无效（应为数组）: {students_json_path}")
+    return students
 
-    students = json.loads(students_json_path.read_text(encoding="utf-8"))
+
+def load_students(
+    students_json_path: Path,
+    other_students_json_path: Path | None = None,
+) -> tuple[
+    dict[str, list[dict[str, str]]],
+    dict[str, dict[str, str]],
+    dict[str, dict[str, str]],
+]:
+    students = load_students_file(students_json_path, "基础学生名单")
     by_class: dict[str, list[dict[str, str]]] = {}
     by_name: dict[str, dict[str, str]] = {}
+    other_by_name: dict[str, dict[str, str]] = {}
 
     for item in students:
         class_name = str(item.get("班级", "")).strip()
@@ -197,13 +214,41 @@ def load_students(students_json_path: Path) -> tuple[dict[str, list[dict[str, st
         if name_norm in by_name and by_name[name_norm]["学号"] != student_no:
             prev = by_name[name_norm]
             raise ValueError(
-                f"学生名单存在重名冲突: {prev['学号']}{prev['姓名']} 与 {student_no}{raw_name}"
+                f"基础学生名单存在重名冲突: {prev['学号']}{prev['姓名']} 与 {student_no}{raw_name}"
             )
 
         by_class.setdefault(class_name, []).append(student)
         by_name[name_norm] = student
 
-    return by_class, by_name
+    if other_students_json_path and other_students_json_path.exists():
+        other_students = load_students_file(other_students_json_path, "其他学生名单")
+        for item in other_students:
+            student_no = str(item.get("学号", "")).strip()
+            raw_name = str(item.get("姓名", "")).strip()
+            name_norm = normalize_name(raw_name)
+            if not student_no or not name_norm:
+                continue
+            student = {
+                "班级": str(item.get("班级", "其他")).strip() or "其他",
+                "学号": student_no,
+                "姓名": raw_name,
+                "姓名标准化": name_norm,
+            }
+
+            if name_norm in by_name and by_name[name_norm]["学号"] != student_no:
+                prev = by_name[name_norm]
+                raise ValueError(
+                    f"基础名单与其他名单重名冲突: {prev['学号']}{prev['姓名']} 与 {student_no}{raw_name}"
+                )
+            if name_norm in other_by_name and other_by_name[name_norm]["学号"] != student_no:
+                prev = other_by_name[name_norm]
+                raise ValueError(
+                    f"其他学生名单存在重名冲突: {prev['学号']}{prev['姓名']} 与 {student_no}{raw_name}"
+                )
+
+            other_by_name[name_norm] = student
+
+    return by_class, by_name, other_by_name
 
 
 def detect_classes_from_excel(
@@ -335,6 +380,7 @@ def make_homework_stat(
     col_time: str,
     col_file: str,
     students_by_class: dict[str, list[dict[str, str]]],
+    other_students_by_name: dict[str, dict[str, str]],
     attachments_dir: Path,
     homework_output_dir: Path,
 ) -> dict[str, Any] | None:
@@ -423,6 +469,21 @@ def make_homework_stat(
             "未交名单": not_submitted,
         }
 
+    other_submitted: list[str] = []
+    for student in other_students_by_name.values():
+        student_name_norm = student["姓名标准化"]
+        row = latest_by_name.get(student_name_norm)
+        if row is None:
+            continue
+        file_url = str(row[col_file])
+        target_file = resolve_attachment_filename(file_url=file_url, files_in_dir=files_in_dir)
+        if not target_file:
+            continue
+        if target_file not in files_in_dir:
+            continue
+        other_submitted.append(student["学号"])
+    stat["其他已交名单"] = sorted(set(other_submitted))
+
     stat["汇总"] = {
         "应交总人数": total_expected,
         "已交总人数": total_submit,
@@ -505,6 +566,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--attachments", default="", help="直接指定课程附件目录（可覆盖自动匹配）")
     parser.add_argument("--students", default="", help="学生名单 JSON 路径")
+    parser.add_argument(
+        "--other-students",
+        default="",
+        help="其他学生名单 JSON 路径（如重修/补修）",
+    )
     parser.add_argument("--out-root", default="", help="输出根目录（会在其下创建课程目录）")
     parser.add_argument("--web-data-root", default="", help="webapp 课程 JSON 输出目录")
     parser.add_argument("--course-index", default="", help="webapp 课程索引 JSON 路径")
@@ -554,6 +620,12 @@ def main() -> None:
         "students",
         str(repo_root / "config" / "students.json"),
     )
+    other_students_text = pick_setting(
+        args.other_students,
+        local_cfg,
+        "other_students",
+        str(repo_root / "config" / "other_students.json"),
+    )
     out_root_text = pick_setting(args.out_root, local_cfg, "out_root", str(repo_root / "out"))
     web_data_root_text = pick_setting(
         args.web_data_root,
@@ -569,6 +641,7 @@ def main() -> None:
     )
 
     students_path = resolve_path(students_text, repo_root)
+    other_students_path = resolve_path(other_students_text, repo_root)
     out_root = resolve_path(out_root_text, repo_root)
     web_data_root = resolve_path(web_data_root_text, repo_root)
     course_index_path = resolve_path(course_index_text, repo_root)
@@ -577,7 +650,12 @@ def main() -> None:
     print(f">>> Excel: {excel_path}")
     print(f">>> 附件目录: {attachments_dir}")
 
-    students_by_class, students_by_name = load_students(students_path)
+    students_by_class, students_by_name, other_students_by_name = load_students(
+        students_json_path=students_path,
+        other_students_json_path=other_students_path if other_students_text else None,
+    )
+    if other_students_by_name:
+        print(f">>> 其他名单人数: {len(other_students_by_name)}")
     if not students_by_class:
         raise ValueError("学生名单为空，无法统计提交情况。")
 
@@ -627,6 +705,7 @@ def main() -> None:
                 col_time=col_time,
                 col_file=col_file,
                 students_by_class=students_by_class,
+                other_students_by_name=other_students_by_name,
                 attachments_dir=attachments_dir,
                 homework_output_dir=hw_dir,
             )

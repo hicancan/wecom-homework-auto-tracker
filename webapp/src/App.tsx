@@ -20,6 +20,7 @@ type HomeworkStat = {
   作业: string
   课程: string
   最后提交时间?: string
+  其他已交名单?: string[]
   汇总?: {
     应交总人数: number
     已交总人数: number
@@ -381,6 +382,11 @@ function App() {
     return Object.entries(selected.班级统计).sort(([a], [b]) => a.localeCompare(b))
   }, [selected])
 
+  const otherSubmittedList = useMemo(() => {
+    if (!selected?.其他已交名单?.length) return []
+    return selected.其他已交名单.map((studentNo) => extractStudentNo(studentNo))
+  }, [selected])
+
   const aggregate = useMemo(() => {
     return classEntries.reduce(
       (acc, [, stat]) => {
@@ -616,6 +622,31 @@ function App() {
             </article>
           )}
         </section>
+
+        {selected && (
+          <section className="mt-6 rounded-2xl border border-emerald-200 bg-white/95 p-5 shadow-[0_20px_45px_rgba(16,185,129,0.1)]">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h3 className="text-base font-semibold text-slate-900">其他（重修/补修）已提交名单</h3>
+              <span className="text-xs text-emerald-700">已提交 {otherSubmittedList.length} 人</span>
+            </div>
+            {otherSubmittedList.length ? (
+              <ul className="grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-2 text-sm">
+                {otherSubmittedList.map((studentNo) => (
+                  <li
+                    key={studentNo}
+                    className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-center text-emerald-800"
+                  >
+                    {studentNo}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-center text-sm text-slate-600">
+                当前作业暂无“其他”同学提交记录
+              </p>
+            )}
+          </section>
+        )}
       </div>
     </main>
   )
