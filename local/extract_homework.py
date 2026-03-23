@@ -372,6 +372,69 @@ def format_datetime(value: Any) -> str:
     return pd.to_datetime(value).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def build_missing_attachment_summary(stat: dict[str, Any]) -> dict[str, Any]:
+    by_class: dict[str, list[str]] = {}
+    class_stats = stat.get("班级统计", {})
+    if isinstance(class_stats, dict):
+        for class_name, class_stat in class_stats.items():
+            if not isinstance(class_stat, dict):
+                continue
+            missing_raw = class_stat.get("已交但附件缺失名单", [])
+            if not isinstance(missing_raw, list):
+                continue
+            missing = sorted({str(x).strip() for x in missing_raw if str(x).strip()})
+            if missing:
+                by_class[str(class_name)] = missing
+
+    total = sum(len(v) for v in by_class.values())
+    summary: dict[str, Any] = {
+        "总人数": total,
+        "班级统计": by_class,
+    }
+    if total > 0:
+        summary["同步提示"] = "检测到表格有提交记录但本地未找到对应附件，请先同步企业微信微盘后重跑本课程区间。"
+    return summary
+
+
+def write_missing_attachment_report(
+    stats_dir: Path,
+    homework_label: str,
+    stat: dict[str, Any],
+) -> tuple[Path | None, int]:
+    summary = build_missing_attachment_summary(stat)
+    total = int(summary.get("总人数", 0))
+    report_path = stats_dir / f"{homework_label}.missing_attachments.txt"
+
+    if total <= 0:
+        if report_path.exists():
+            report_path.unlink()
+        return None, 0
+
+    by_class = summary.get("班级统计", {})
+    lines: list[str] = [
+        f"课程: {stat.get('课程', '')}",
+        f"作业: {homework_label}",
+        f"缺失附件人数: {total}",
+        "",
+        "以下同学在收集表中有提交记录，但本地同步目录中未找到附件：",
+    ]
+    if isinstance(by_class, dict):
+        for class_name in sorted(by_class.keys()):
+            lines.append(f"- {class_name}")
+            for student_no in by_class[class_name]:
+                lines.append(f"  - {student_no}")
+    lines.extend(
+        [
+            "",
+            "处理建议：",
+            "1. 打开企业微信微盘客户端，确认该课程“收集的文件”已同步完成。",
+            "2. 同步完成后，重跑本课程对应 --from --to 区间。",
+        ]
+    )
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return report_path, total
+
+
 def load_existing_course_homework_stats(
     public_root: Path,
     course_name: str,
@@ -523,6 +586,7 @@ def make_homework_stat(
         "未交总人数": total_expected - total_submit,
         "总提交率": round((total_submit / total_expected) if total_expected else 0, 4),
     }
+    stat["附件缺失"] = build_missing_attachment_summary(stat)
     return stat
 
 
@@ -782,6 +846,7 @@ def main() -> None:
     range_homework_labels = [
         hw for hw in homework_labels if from_order <= parse_homework_order(hw) <= to_order
     ]
+    missing_attachment_reports: list[tuple[str, Path, int]] = []
 
     for hw in range_homework_labels:
         print(f"\n>>> 开始处理 {course_name} {hw}")
@@ -811,6 +876,17 @@ def main() -> None:
         hw_stat_file.write_text(json.dumps(stat, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"√ 已输出: {hw_stat_file}")
 
+        missing_report_path, missing_total = write_missing_attachment_report(
+            stats_dir=stats_dir,
+            homework_label=hw,
+            stat=stat,
+        )
+        if missing_report_path is not None and missing_total > 0:
+            missing_attachment_reports.append((hw, missing_report_path, missing_total))
+            print(f"  [!] {hw} 检测到附件缺失 {missing_total} 人")
+            print(f"  [!] 缺失报告: {missing_report_path}")
+            print("  [!] 请先同步企业微信微盘，再重跑该课程区间。")
+
     in_range_existing_missing = [
         hw
         for hw in existing_stats.keys()
@@ -822,6 +898,10 @@ def main() -> None:
 
     if not all_stats:
         print("  [!] 当前区间内外均无可用统计，输出将为空。")
+    elif missing_attachment_reports:
+        print("\n>>> 附件缺失汇总（请先同步微盘后重跑）")
+        for hw, report_path, count in missing_attachment_reports:
+            print(f"- {hw}: 缺失 {count} 人 -> {report_path}")
 
     summary_path = course_out_dir / "course_summary.json"
     summary_data = {
