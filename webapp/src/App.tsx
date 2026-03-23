@@ -212,6 +212,7 @@ function App() {
 
   const [indexData, setIndexData] = useState<CourseIndex | null>(null)
   const [courseData, setCourseData] = useState<CourseData | null>(null)
+  const [isCourseLoading, setIsCourseLoading] = useState(false)
   const [shareFeedback, setShareFeedback] = useState('')
   const [indexError, setIndexError] = useState('')
   const [courseError, setCourseError] = useState('')
@@ -260,6 +261,7 @@ function App() {
     if (!selectedCourse) {
       setCourseData(null)
       setCourseError('')
+      setIsCourseLoading(false)
       return
     }
 
@@ -267,6 +269,7 @@ function App() {
     if (!item) return
 
     const controller = new AbortController()
+    setIsCourseLoading(true)
     setCourseData(null)
     setCourseError('')
 
@@ -280,11 +283,13 @@ function App() {
       .then((json) => {
         if (controller.signal.aborted) return
         setCourseData(json)
+        setIsCourseLoading(false)
       })
       .catch((e: unknown) => {
         if (controller.signal.aborted) return
         setCourseData(null)
         setCourseError(e instanceof Error ? e.message : '课程数据加载失败')
+        setIsCourseLoading(false)
       })
 
     return () => controller.abort()
@@ -479,7 +484,8 @@ function App() {
                 }}
                 disabled={!homeworkKeys.length || !canInteract}
               >
-                {!selectedKey && <option value="">请选择作业</option>}
+                {isCourseLoading && <option value="">加载中...</option>}
+                {!isCourseLoading && !selectedKey && <option value="">请选择作业</option>}
                 {homeworkKeys.map((k) => (
                   <option key={k} value={k}>
                     {k}
