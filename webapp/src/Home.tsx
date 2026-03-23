@@ -109,7 +109,6 @@ function Home() {
           </div>
           <p className="mt-3 text-sm text-slate-600">网页最后部署时间：{deployTime}</p>
           {shareFeedback && <p className="mt-2 text-xs text-slate-500">{shareFeedback}</p>}
-          <p className="mt-2 text-sm text-slate-600">请选择课程进入看板，路由将保持可分享的课程链接。</p>
         </header>
 
         {error && (
