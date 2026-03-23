@@ -212,7 +212,6 @@ function App() {
 
   const [indexData, setIndexData] = useState<CourseIndex | null>(null)
   const [courseData, setCourseData] = useState<CourseData | null>(null)
-  const [selectedKey, setSelectedKey] = useState('')
   const [shareFeedback, setShareFeedback] = useState('')
   const [indexError, setIndexError] = useState('')
   const [courseError, setCourseError] = useState('')
@@ -260,7 +259,6 @@ function App() {
   useEffect(() => {
     if (!selectedCourse) {
       setCourseData(null)
-      setSelectedKey('')
       setCourseError('')
       return
     }
@@ -270,7 +268,6 @@ function App() {
 
     const controller = new AbortController()
     setCourseData(null)
-    setSelectedKey('')
     setCourseError('')
 
     fetch(`${publicBase}${item.数据文件}`, { signal: controller.signal })
@@ -282,28 +279,31 @@ function App() {
       })
       .then((json) => {
         if (controller.signal.aborted) return
-        const keys = Object.keys(json.作业统计 || {}).sort(
-          (a, b) => parseHomeworkOrder(a) - parseHomeworkOrder(b),
-        )
         setCourseData(json)
-        setSelectedKey(keys.length ? keys[keys.length - 1] : '')
       })
       .catch((e: unknown) => {
         if (controller.signal.aborted) return
         setCourseData(null)
-        setSelectedKey('')
         setCourseError(e instanceof Error ? e.message : '课程数据加载失败')
       })
 
     return () => controller.abort()
   }, [courseMap, publicBase, selectedCourse])
 
-  useEffect(() => {
-    if (!routeHomework || !courseData) return
-    const keys = Object.keys(courseData.作业统计 || {})
-    if (!keys.includes(routeHomework)) return
-    setSelectedKey(routeHomework)
-  }, [courseData, routeHomework])
+  const homeworkKeys = useMemo(() => {
+    if (!courseData) return []
+    return Object.keys(courseData.作业统计 || {}).sort(
+      (a, b) => parseHomeworkOrder(a) - parseHomeworkOrder(b),
+    )
+  }, [courseData])
+
+  const selectedKey = useMemo(() => {
+    if (!homeworkKeys.length) return ''
+    if (routeHomework && homeworkKeys.includes(routeHomework)) {
+      return routeHomework
+    }
+    return homeworkKeys[homeworkKeys.length - 1]
+  }, [homeworkKeys, routeHomework])
 
   useEffect(() => {
     if (!selectedCourse || !courseData || courseData.课程 !== selectedCourse) return
@@ -313,9 +313,9 @@ function App() {
       nextSearchParams.set('hw', selectedKey)
     }
     const nextSearch = nextSearchParams.toString()
-    const currentSearch = searchParams.toString()
+    const currentHomework = routeHomework || ''
 
-    if (routeCourse !== selectedCourse || currentSearch !== nextSearch) {
+    if (routeCourse !== selectedCourse || currentHomework !== selectedKey || searchParams.toString() !== nextSearch) {
       navigate(
         {
           pathname: nextPathname,
@@ -324,7 +324,7 @@ function App() {
         { replace: true },
       )
     }
-  }, [courseData, navigate, routeCourse, searchParams, selectedCourse, selectedKey])
+  }, [courseData, navigate, routeCourse, routeHomework, searchParams, selectedCourse, selectedKey])
 
   const routeError = useMemo(() => {
     if (!indexData) return ''
@@ -351,13 +351,6 @@ function App() {
       setShareFeedback('复制失败，请手动复制地址栏链接')
     }
   }
-
-  const homeworkKeys = useMemo(() => {
-    if (!courseData) return []
-    return Object.keys(courseData.作业统计 || {}).sort(
-      (a, b) => parseHomeworkOrder(a) - parseHomeworkOrder(b),
-    )
-  }, [courseData])
 
   const selected = useMemo(() => {
     if (!courseData || !selectedKey) return null
