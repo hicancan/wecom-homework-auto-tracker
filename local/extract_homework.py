@@ -413,6 +413,11 @@ def build_missing_attachment_summary(stat: dict[str, Any]) -> dict[str, Any]:
             missing = sorted({str(x).strip() for x in missing_raw if str(x).strip()})
             if missing:
                 by_class[str(class_name)] = missing
+    other_missing_raw = stat.get("其他已交但附件缺失名单", [])
+    if isinstance(other_missing_raw, list):
+        other_missing = sorted({str(x).strip() for x in other_missing_raw if str(x).strip()})
+        if other_missing:
+            by_class["其他"] = other_missing
 
     total = sum(len(v) for v in by_class.values())
     summary: dict[str, Any] = {
@@ -649,13 +654,65 @@ def make_homework_stat(
         }
 
     other_submitted: list[str] = []
+    other_missing: list[str] = []
+    other_dir = homework_output_dir / "其他"
     for student in other_students_by_name.values():
         student_name_norm = student["姓名标准化"]
         row = latest_by_name.get(student_name_norm)
         if row is None:
             continue
-        other_submitted.append(student["学号"])
+        student_no = student["学号"]
+        student_name = student["姓名"]
+        other_submitted.append(student_no)
+
+        uploaded_value = str(row[col_file]).strip()
+        target_file, candidate_files = resolve_attachment_filename(
+            uploaded_value=uploaded_value,
+            attachment_lookup=attachment_lookup,
+            duplicate_lookup=duplicate_lookup,
+        )
+        if not target_file:
+            print(f"  [!] 其他同学已交但未匹配到附件: [{student_name}/{student_no}]")
+            if candidate_files:
+                print(f"      候选附件名: {' | '.join(candidate_files)}")
+            if uploaded_value:
+                print(f"      原始上传字段: {uploaded_value}")
+            other_missing.append(student_no)
+            attachment_missing_details.append(
+                {
+                    "班级": "其他",
+                    "学号": student_no,
+                    "姓名": student_name,
+                    "候选附件名": candidate_files,
+                    "原始上传字段": uploaded_value,
+                }
+            )
+            continue
+
+        src_path = attachments_dir / target_file
+        if not src_path.exists():
+            print(f"  [!] 其他同学已交但附件不存在: [{student_name}/{student_no}] -> '{target_file}'")
+            other_missing.append(student_no)
+            attachment_missing_details.append(
+                {
+                    "班级": "其他",
+                    "学号": student_no,
+                    "姓名": student_name,
+                    "候选附件名": [target_file],
+                    "原始上传字段": uploaded_value,
+                }
+            )
+            continue
+
+        if not other_dir.exists():
+            other_dir.mkdir(parents=True, exist_ok=True)
+        ext = src_path.suffix
+        renamed = f"{student_no}{sanitize_filename_component(student_name)}{ext}"
+        dst_path = other_dir / renamed
+        shutil.copy2(src_path, dst_path)
+
     stat["其他已交名单"] = sorted(set(other_submitted))
+    stat["其他已交但附件缺失名单"] = sorted(set(other_missing))
 
     stat["汇总"] = {
         "应交总人数": total_expected,
@@ -915,6 +972,13 @@ def main() -> None:
         print("  [!] 检测到重复附件名（将标记为歧义并计入附件缺失）：")
         for file_name, count in sorted(latest_file_duplicates.items(), key=lambda kv: kv[1], reverse=True)[:10]:
             print(f"      - {file_name} x{count}")
+        duplicate_preview = ", ".join(
+            [f"{name} x{count}" for name, count in sorted(latest_file_duplicates.items(), key=lambda kv: kv[1], reverse=True)[:10]]
+        )
+        raise ValueError(
+            "Excel 最新记录存在重复附件名，无法保证一一匹配，请先修正命名后重跑。"
+            f"示例: {duplicate_preview}"
+        )
 
     attachment_lookup, duplicate_lookup = build_attachment_lookup(attachments_dir)
     print(
