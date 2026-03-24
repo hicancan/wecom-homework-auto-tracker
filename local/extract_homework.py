@@ -66,6 +66,120 @@ def parse_homework_order(hw_name: str) -> int:
     return int(match.group(1)) if match else 10**9
 
 
+def parse_bool_setting(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "y", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "n", "off"}:
+            return False
+    return default
+
+
+def resolve_course_template(
+    cfg: dict[str, Any],
+    map_key: str,
+    course_name: str,
+    default: str,
+) -> str:
+    raw = cfg.get(map_key)
+    if isinstance(raw, dict):
+        course_template = str(raw.get(course_name, "")).strip()
+        if course_template:
+            return course_template
+        default_template = str(raw.get("default", "")).strip()
+        if default_template:
+            return default_template
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return default
+
+
+def render_template_text(template: str, context: dict[str, Any], label: str) -> str:
+    try:
+        rendered = template.format_map(context)
+    except KeyError as err:
+        missing = str(err).strip("'")
+        raise ValueError(f"{label}模板包含未知字段: {missing}") from err
+    return str(rendered).strip()
+
+
+def build_output_filename(
+    template: str,
+    *,
+    student_no: str,
+    student_name: str,
+    class_name: str,
+    course_name: str,
+    homework_label: str,
+    homework_order: int,
+    ext: str,
+) -> str:
+    context = {
+        "student_no": sanitize_filename_component(student_no),
+        "student_name": sanitize_filename_component(student_name),
+        "class_name": sanitize_filename_component(class_name),
+        "course_name": sanitize_filename_component(course_name),
+        "homework_label": sanitize_filename_component(homework_label),
+        "homework_order": (homework_order if homework_order != 10**9 else 0),
+        "report_title": (
+            f"实验报告{homework_order}" if homework_order != 10**9 else "实验报告"
+        ),
+        "ext": ext,
+    }
+    rendered = render_template_text(template, context, "输出文件名")
+    filename = sanitize_filename_component(rendered)
+    if not filename:
+        raise ValueError("输出文件名模板渲染后为空。")
+    if ext and not filename.lower().endswith(ext.lower()):
+        filename = f"{filename}{ext}"
+    return filename
+
+
+def build_zip_filename(
+    template: str,
+    *,
+    course_name: str,
+    homework_label: str,
+    homework_order: int,
+) -> str:
+    context = {
+        "course_name": sanitize_filename_component(course_name),
+        "homework_label": sanitize_filename_component(homework_label),
+        "homework_order": (homework_order if homework_order != 10**9 else 0),
+    }
+    rendered = render_template_text(template, context, "压缩包名")
+    filename = sanitize_filename_component(rendered)
+    if not filename:
+        raise ValueError("压缩包名模板渲染后为空。")
+    if not filename.lower().endswith(".zip"):
+        filename = f"{filename}.zip"
+    return filename
+
+
+def create_homework_zip(
+    homework_output_dir: Path,
+    zip_dir: Path,
+    zip_filename: str,
+) -> Path:
+    zip_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = zip_dir / zip_filename
+    if zip_path.exists():
+        zip_path.unlink()
+
+    archive_path = shutil.make_archive(
+        base_name=str(zip_path.with_suffix("")),
+        format="zip",
+        root_dir=str(homework_output_dir.parent),
+        base_dir=homework_output_dir.name,
+    )
+    return Path(archive_path)
+
+
 def normalize_homework_label(value: str) -> str:
     raw = str(value).strip()
     match = re.search(r"(\d+)", raw)
@@ -546,6 +660,7 @@ def make_homework_stat(
     attachment_lookup: dict[str, str],
     duplicate_lookup: dict[str, list[str]],
     homework_output_dir: Path,
+    output_filename_template: str,
 ) -> dict[str, Any] | None:
     df_hw = df[df["_homework_label"] == homework_label].copy()
     if df_hw.empty:
@@ -554,6 +669,7 @@ def make_homework_stat(
     df_latest = df_hw.sort_values(by=col_time).drop_duplicates(subset=["_name_norm"], keep="last")
     latest_by_name = {row["_name_norm"]: row for _, row in df_latest.iterrows()}
     latest_submit_time = format_datetime(df_hw[col_time].max())
+    homework_order = parse_homework_order(homework_label)
 
     if homework_output_dir.exists():
         shutil.rmtree(homework_output_dir)
@@ -634,8 +750,22 @@ def make_homework_stat(
                 )
                 continue
             ext = src_path.suffix
-            renamed = f"{student_no}{sanitize_filename_component(student_name)}{ext}"
+            renamed = build_output_filename(
+                template=output_filename_template,
+                student_no=student_no,
+                student_name=student_name,
+                class_name=class_name,
+                course_name=course_name,
+                homework_label=homework_label,
+                homework_order=homework_order,
+                ext=ext,
+            )
             dst_path = homework_output_dir / class_name / renamed
+            if dst_path.exists():
+                raise ValueError(
+                    f"输出文件名冲突: {dst_path}。"
+                    "请调整 output_filename_templates，确保同一作业内文件名唯一。"
+                )
             shutil.copy2(src_path, dst_path)
 
         expected_count = len(class_students)
@@ -707,8 +837,22 @@ def make_homework_stat(
         if not other_dir.exists():
             other_dir.mkdir(parents=True, exist_ok=True)
         ext = src_path.suffix
-        renamed = f"{student_no}{sanitize_filename_component(student_name)}{ext}"
+        renamed = build_output_filename(
+            template=output_filename_template,
+            student_no=student_no,
+            student_name=student_name,
+            class_name="其他",
+            course_name=course_name,
+            homework_label=homework_label,
+            homework_order=homework_order,
+            ext=ext,
+        )
         dst_path = other_dir / renamed
+        if dst_path.exists():
+            raise ValueError(
+                f"输出文件名冲突: {dst_path}。"
+                "请调整 output_filename_templates，确保同一作业内文件名唯一。"
+            )
         shutil.copy2(src_path, dst_path)
 
     stat["其他已交名单"] = sorted(set(other_submitted))
@@ -920,10 +1064,28 @@ def main() -> None:
     out_root = resolve_path(out_root_text, repo_root)
     web_data_root = resolve_path(web_data_root_text, repo_root)
     course_index_path = resolve_path(course_index_text, repo_root)
+    output_filename_template = resolve_course_template(
+        local_cfg,
+        "output_filename_templates",
+        course_name,
+        "{student_no}{student_name}{ext}",
+    )
+    zip_name_template = resolve_course_template(
+        local_cfg,
+        "zip_name_templates",
+        course_name,
+        "{course_name}-{homework_label}",
+    )
+    zip_enabled = parse_bool_setting(local_cfg.get("zip_enabled"), True)
 
     print(f">>> 课程: {course_name}")
     print(f">>> Excel: {excel_path}")
     print(f">>> 附件目录: {attachments_dir}")
+    print(f">>> 输出命名模板: {output_filename_template}")
+    if zip_enabled:
+        print(f">>> 压缩包模板: {zip_name_template}")
+    else:
+        print(">>> 压缩包输出: 已关闭（zip_enabled=false）")
 
     students_by_class, students_by_name, other_students_by_name = load_students(
         students_json_path=students_path,
@@ -1019,6 +1181,8 @@ def main() -> None:
         hw for hw in homework_labels if from_order <= parse_homework_order(hw) <= to_order
     ]
     missing_attachment_reports: list[tuple[str, Path, int]] = []
+    generated_zip_files: list[Path] = []
+    zip_output_dir = course_out_dir / "zip"
 
     for hw in range_homework_labels:
         print(f"\n>>> 开始处理 {course_name} {hw}")
@@ -1036,6 +1200,7 @@ def main() -> None:
             attachment_lookup=attachment_lookup,
             duplicate_lookup=duplicate_lookup,
             homework_output_dir=hw_dir,
+            output_filename_template=output_filename_template,
         )
         if stat is None:
             if hw in existing_stats:
@@ -1049,6 +1214,20 @@ def main() -> None:
         hw_stat_file = stats_dir / f"{hw}.json"
         hw_stat_file.write_text(json.dumps(stat, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"√ 已输出: {hw_stat_file}")
+        if zip_enabled:
+            zip_filename = build_zip_filename(
+                template=zip_name_template,
+                course_name=course_name,
+                homework_label=hw,
+                homework_order=parse_homework_order(hw),
+            )
+            zip_path = create_homework_zip(
+                homework_output_dir=hw_dir,
+                zip_dir=zip_output_dir,
+                zip_filename=zip_filename,
+            )
+            generated_zip_files.append(zip_path)
+            print(f"√ 已打包: {zip_path}")
 
         missing_report_path, missing_total = write_missing_attachment_report(
             stats_dir=stats_dir,
@@ -1102,6 +1281,9 @@ def main() -> None:
         "作业列表": sorted(all_stats.keys(), key=parse_homework_order),
         "统计文件目录": str(stats_dir),
     }
+    if zip_enabled:
+        summary_data["压缩包目录"] = str(zip_output_dir)
+        summary_data["压缩包列表"] = [str(path) for path in generated_zip_files]
     summary_path.write_text(json.dumps(summary_data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     write_course_web_data(
@@ -1118,6 +1300,13 @@ def main() -> None:
     print("\n处理完成！")
     print(f"- 课程输出目录: {course_out_dir}")
     print(f"- 单次作业统计目录: {stats_dir}")
+    if zip_enabled:
+        if generated_zip_files:
+            print("- 本次生成压缩包:")
+            for zip_path in generated_zip_files:
+                print(f"  - {zip_path}")
+        else:
+            print(f"- 本次未生成压缩包（目录: {zip_output_dir}）")
     print(f"- 课程汇总: {summary_path}")
     print(f"- web 课程作业索引: {web_data_root / (sanitize_filename_component(course_name) + '.index.json')}")
     print(f"- web 课程索引: {course_index_path}")

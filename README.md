@@ -35,6 +35,8 @@
 - **⚡ 超快的前端响应**：作业数据按次分片存储在单独的 JSON 中（`course.index` + `hwNNN`），前端按需懒加载，极速渲染。
 - **🔄 稳定实时更新**：前端拉取配置时强制设定 `no-store`，搭配数据文件版本参数 `?v=...`，确保学生永远看到**最准确**的数据，无需烦心浏览器缓存刺客。
 - **🧑‍🎓 “其他”学生通道**：除了常规名单，内置支持 `other_students.json`（可用于重修、补修学生），名单结构独立展示，互不干扰。
+- **🏷️ 可配置命名模板**：支持在 `local.config.json` 按课程配置附件重命名模板（例如 `学号-姓名-实验报告N`）。
+- **📦 自动打包压缩包**：每次作业提取后自动生成 `课程名-次数.zip`，可直接发送给任课老师。
 - **🔒 隐私优先设计**：看板展示全部使用**学号及班级信息**进行脱敏，完全不会暴露个人真实姓名。
 - **🌐 零成本自动部署**：基于 GitHub Actions 和 GitHub Pages 实现自动构建与发布，搭配 Cloudflare 支持全站缓存精准清理。
 
@@ -108,9 +110,22 @@ Copy-Item .\config\config.template.json .\config\local.config.json
 - `attachments_root`: 企业微信微盘同步根目录
 - `students`: 基础学生名单 JSON（见下方格式示例）
 - `other_students`: 其他学生名单 JSON（可保留默认）
+- `output_filename_templates`: 输出文件命名模板（支持按课程覆盖）
+- `zip_enabled`: 是否自动生成 zip（默认 `true`）
+- `zip_name_templates`: 压缩包命名模板（支持按课程覆盖）
 - `out_root`: 提取附件和数据的输出根目录
 - `web_data_root`: 网页数据目录（推荐保持默认 `webapp/public/data`）
 - `course_index`: 课程总索引文件路径（推荐保持默认 `webapp/public/courses.json`）
+
+> **命名模板可用字段：**
+> - `{student_no}` 学号
+> - `{student_name}` 姓名
+> - `{class_name}` 班级
+> - `{course_name}` 课程名
+> - `{homework_label}` 作业标签（如 `第1次`）
+> - `{homework_order}` 作业次数数字（如 `1`）
+> - `{report_title}` 自动拼接的 `实验报告N`
+> - `{ext}` 原附件扩展名（如 `.docx`）
 
 > **`students` 名单数据格式示例：**
 > ```json
@@ -134,6 +149,7 @@ Copy-Item .\config\config.template.json .\config\local.config.json
 3. 循环让你输入需要处理的作业批次区间 (`--from` 和 `--to`)。
 4. 在正式执行前展示参数总览，供你做最后确认。
 5. 全部成功后自动执行 `git commit + git push`（仅提交 `webapp/public`）。
+6. 每次作业目录会自动打包为 `out/<课程>/zip/<课程名>-<第N次>.zip`。
 
 如需只跑提取、不自动推送：
 

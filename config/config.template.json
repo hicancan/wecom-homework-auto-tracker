@@ -4,6 +4,14 @@
   "attachments": "",
   "students": "config/students.json",
   "other_students": "config/other_students.json",
+  "output_filename_templates": {
+    "default": "{student_no}{student_name}{ext}",
+    "人工智能导论及其Python应用实践实验B240402": "{student_no}-{student_name}-实验报告{homework_order}{ext}"
+  },
+  "zip_enabled": true,
+  "zip_name_templates": {
+    "default": "{course_name}-{homework_label}"
+  },
   "out_root": "out",
   "web_data_root": "webapp/public/data",
   "course_index": "webapp/public/courses.json",
