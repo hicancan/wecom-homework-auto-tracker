@@ -116,11 +116,21 @@ def print_plan(items: list[PlanItem]) -> None:
         )
 
 
-def run_extract(python_exe: Path, repo_root: Path, item: PlanItem) -> int:
+def build_extract_cmd(
+    python_exe: Path,
+    repo_root: Path,
+    config_path: Path,
+    item: PlanItem,
+    *,
+    cleanup_mode: str = "off",
+    cleanup_only: bool = False,
+) -> list[str]:
     extract_script = repo_root / "local" / "extract_homework.py"
     cmd = [
         str(python_exe),
         str(extract_script),
+        "--config",
+        str(config_path),
         "--excel",
         str(item.excel),
         "--from",
@@ -128,12 +138,44 @@ def run_extract(python_exe: Path, repo_root: Path, item: PlanItem) -> int:
         "--to",
         str(item.to_order),
     ]
+    if cleanup_mode != "off":
+        cmd.extend(["--cleanup-source-attachments", cleanup_mode])
+    if cleanup_only:
+        cmd.append("--cleanup-only")
+    return cmd
+
+
+def run_extract(python_exe: Path, repo_root: Path, config_path: Path, item: PlanItem) -> int:
+    cmd = build_extract_cmd(
+        python_exe=python_exe,
+        repo_root=repo_root,
+        config_path=config_path,
+        item=item,
+    )
     print(f"\n开始处理: {item.course} --from {item.from_order} --to {item.to_order}")
     proc = subprocess.run(cmd, cwd=repo_root)
     if proc.returncode == 0:
         print(f"处理完成: {item.course}")
     else:
         print(f"处理失败: {item.course}")
+    return proc.returncode
+
+
+def run_cleanup(python_exe: Path, repo_root: Path, config_path: Path, item: PlanItem) -> int:
+    cmd = build_extract_cmd(
+        python_exe=python_exe,
+        repo_root=repo_root,
+        config_path=config_path,
+        item=item,
+        cleanup_mode="apply",
+        cleanup_only=True,
+    )
+    print(f"\n开始清理源附件: {item.course} --from {item.from_order} --to {item.to_order}")
+    proc = subprocess.run(cmd, cwd=repo_root)
+    if proc.returncode == 0:
+        print(f"清理完成: {item.course}")
+    else:
+        print(f"清理失败: {item.course}")
     return proc.returncode
 
 
@@ -238,7 +280,12 @@ def main() -> int:
 
     failed: list[str] = []
     for item in plan:
-        code = run_extract(python_exe=python_exe, repo_root=repo_root, item=item)
+        code = run_extract(
+            python_exe=python_exe,
+            repo_root=repo_root,
+            config_path=config_path,
+            item=item,
+        )
         if code != 0:
             failed.append(item.course)
 
@@ -249,6 +296,30 @@ def main() -> int:
         return 1
 
     print("\n全部课程处理完成。")
+    cleanup_confirm = input(
+        "\n是否删除本次处理区间在企业微信同步目录中的源附件？"
+        "这会按 Excel 对应作业的全部附件记录删除，并自动跳过其他作业仍引用的同名文件。[y/N]: "
+    ).strip().lower()
+    cleanup_failed: list[str] = []
+    if cleanup_confirm in {"y", "yes"}:
+        for item in plan:
+            code = run_cleanup(
+                python_exe=python_exe,
+                repo_root=repo_root,
+                config_path=config_path,
+                item=item,
+            )
+            if code != 0:
+                cleanup_failed.append(item.course)
+        if cleanup_failed:
+            print("\n以下课程源附件清理失败（统计结果已生成，可稍后重试清理）：")
+            for name in cleanup_failed:
+                print(f"- {name}")
+        else:
+            print("\n源附件清理完成。")
+    else:
+        print("已跳过源附件清理。")
+
     if args.no_git:
         print("已按参数 --no-git 跳过提交。")
         return 0

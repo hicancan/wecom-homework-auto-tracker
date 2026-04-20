@@ -4,6 +4,10 @@
   "attachments": "",
   "students": "config/students.json",
   "other_students": "config/other_students.json",
+  "allowed_submission_extensions": {
+    "default": [".doc", ".docx", ".pdf"],
+    "人工智能导论及其Python应用实践实验B240402": [".doc", ".docx", ".pdf", ".zip"]
+  },
   "output_filename_templates": {
     "default": "{student_no}{student_name}{ext}",
     "人工智能导论及其Python应用实践实验B240402": "{student_no}-{student_name}-实验报告{homework_order}{ext}"

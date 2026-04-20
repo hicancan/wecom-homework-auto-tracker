@@ -104,18 +104,31 @@ pip install pandas openpyxl
 Copy-Item .\config\config.template.json .\config\local.config.json
 ```
 
+项目运行时实际读取的是 `config/local.config.json`。如果仓库里已经有这个文件，请直接修改它；`config.template.json` 只是初始化模板。
+
 编辑 `config/local.config.json`，根据你的本地环境设置相关路径：
 
 - `courses_dir`: 课程 Excel 所在目录
 - `attachments_root`: 企业微信微盘同步根目录
 - `students`: 基础学生名单 JSON（见下方格式示例）
 - `other_students`: 其他学生名单 JSON（可保留默认）
+- `allowed_submission_extensions`: 计入“已提交”的附件后缀白名单，默认 `doc/docx/pdf`，支持按课程覆盖
 - `output_filename_templates`: 输出文件命名模板（支持按课程覆盖）
 - `zip_enabled`: 是否自动生成 zip（默认 `true`）
 - `zip_name_templates`: 压缩包命名模板（支持按课程覆盖）
 - `out_root`: 提取附件和数据的输出根目录
 - `web_data_root`: 网页数据目录（推荐保持默认 `webapp/public/data`）
 - `course_index`: 课程总索引文件路径（推荐保持默认 `webapp/public/courses.json`）
+
+> **`allowed_submission_extensions` 配置示例：**
+> ```json
+> {
+>   "default": [".doc", ".docx", ".pdf"],
+>   "某门课程": [".doc", ".docx", ".pdf", ".zip"]
+> }
+> ```
+> - 支持写成带点或不带点：`.pdf` 和 `pdf` 都可以
+> - 如果学生上传了白名单外的附件（例如 `.jpg`、`.png`），系统会记录到“无效附件”报告，但**不会计入提交率**
 
 > **命名模板可用字段：**
 > - `{student_no}` 学号
@@ -148,8 +161,10 @@ Copy-Item .\config\config.template.json .\config\local.config.json
 2. 让你轻松勾选一个或多个课程（支持输入 `1,2` / `1，2` / `1-3` / `all`）。
 3. 循环让你输入需要处理的作业批次区间 (`--from` 和 `--to`)。
 4. 在正式执行前展示参数总览，供你做最后确认。
-5. 全部成功后自动执行 `git commit + git push`（仅提交 `webapp/public`）。
-6. 每次作业目录会自动打包为 `out/<课程>/zip/<课程名>-<第N次>.zip`。
+5. 每次作业目录会自动打包为 `out/<课程>/zip/<课程名>-<第N次>.zip`。
+6. 全部成功后，**最后会询问你是否清理企业微信同步到本地的源附件**。
+7. 如果你选择清理，脚本会按 Excel 中本次作业范围的**全部附件记录**删除对应源文件，并自动跳过仍被其他作业引用的同名文件。
+8. 之后再自动执行 `git commit + git push`（仅提交 `webapp/public`）。
 
 如需只跑提取、不自动推送：
 
@@ -229,7 +244,7 @@ git push origin main
    这样既保证了连续的增量，又避免污染未来未发布数据的轮次。
 
 2. **微盘存储空间优化**
-   当企业微信微盘空间即将拉满时，**勇敢清理并删除历史的原始附件**。只要你的 Git 仓库和本地 `webapp/public/data/*.hwNNN.json` 文件妥善保管着已生成的 JSON，在线的看版依旧坚不可摧地能查询到历史的情况。
+   当企业微信微盘空间即将拉满时，**勇敢清理并删除历史的原始附件**。交互式脚本在提取成功后会提供一个“是否删除源附件”的确认步骤，并为每次作业生成 `out/<课程>/stats/<第N次>.source_attachment_cleanup.json` 清理报告。只要你的 Git 仓库和本地 `webapp/public/data/*.hwNNN.json` 文件妥善保管着已生成的 JSON，在线的看版依旧坚不可摧地能查询到历史的情况。
 
 3. **班级跨度大的范围锁定 (Class scope locking)**
    如果在 `courses.json` 中配置了 `course_classes.<课程名>.lock = true`，这门课统计的班级范围将被固定，不会再被新拉取的 Excel 数据自动探测和调整范围。这在处理包含学长/补修混杂的跨学期班级时，数据表现会非常稳定。
@@ -252,7 +267,7 @@ git push origin main
 - **Q: 它骂我：“缺少 `--from` 和 `--to` 参数！”**
   A: 别慌，这是我们精心设计的全量覆盖保护机制。请补齐具体的开始与截止次数即可正常执行。
 - **Q: 学生明确表示交了，为何我的附件还是没统计进去？**
-  A: 首先检查你的微盘本地同步客户端是否完成同步（有时会在几十兆左右卡顿）；其次检查文件名是否被手动擅自更改、重命名使其不符合正则表达式规则。
+  A: 先检查企业微信微盘客户端是否已经把“收集的文件”同步到本地；其次确认该附件后缀是否在 `allowed_submission_extensions` 白名单里。比如默认只认 `doc/docx/pdf`，如果学生传的是图片，系统会记为“无效附件”，不会计入提交率。
 - **Q: 推上去后，网页仍然显示老数据？**
   A: 用浏览器的隐身模式测试下。如果隐身模式也还是旧的，确认下 GitHub Actions Pipeline 有没有执行通过，`course-manifest.json` 在代码库里有没有发生更新。
 

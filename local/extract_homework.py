@@ -16,6 +16,9 @@ from typing import Any
 import pandas as pd
 from course_manifest import rebuild_course_manifest
 
+DEFAULT_ALLOWED_SUBMISSION_EXTENSIONS = (".doc", ".docx", ".pdf")
+ALLOW_ALL_EXTENSIONS = object()
+
 
 def load_local_config(config_path: Path) -> dict[str, Any]:
     if not config_path.exists():
@@ -78,6 +81,84 @@ def parse_bool_setting(value: Any, default: bool) -> bool:
         if lowered in {"0", "false", "no", "n", "off"}:
             return False
     return default
+
+
+def normalize_extension(value: Any) -> str:
+    raw = str(value).strip().lower()
+    if not raw:
+        return ""
+    if raw == "*":
+        return "*"
+    return raw if raw.startswith(".") else f".{raw}"
+
+
+def parse_extension_allowlist(value: Any) -> tuple[str, ...] | object | None:
+    if value is None:
+        return None
+
+    items: list[Any]
+    if isinstance(value, str):
+        items = re.split(r"[\s,;|]+", value.strip())
+    elif isinstance(value, (list, tuple, set)):
+        items = list(value)
+    else:
+        items = [value]
+
+    normalized: list[str] = []
+    for item in items:
+        ext = normalize_extension(item)
+        if not ext:
+            continue
+        if ext == "*":
+            return ALLOW_ALL_EXTENSIONS
+        normalized.append(ext)
+
+    if not normalized:
+        return None
+    return tuple(sorted(set(normalized)))
+
+
+def resolve_course_extension_allowlist(
+    cfg: dict[str, Any],
+    map_key: str,
+    course_name: str,
+    default: tuple[str, ...],
+) -> tuple[str, ...] | None:
+    raw = cfg.get(map_key)
+    selected: Any = raw
+    if isinstance(raw, dict):
+        selected = raw.get(course_name)
+        if selected is None or selected == "" or selected == []:
+            selected = raw.get("default")
+
+    parsed = parse_extension_allowlist(selected)
+    if parsed is ALLOW_ALL_EXTENSIONS:
+        return None
+    if isinstance(parsed, tuple):
+        return parsed
+
+    fallback = parse_extension_allowlist(default)
+    if fallback is ALLOW_ALL_EXTENSIONS:
+        return None
+    if isinstance(fallback, tuple):
+        return fallback
+    raise ValueError("有效提交后缀配置无效，且默认后缀白名单不可用。")
+
+
+def is_allowed_attachment_filename(
+    filename: str,
+    allowed_extensions: tuple[str, ...] | None,
+) -> bool:
+    if allowed_extensions is None:
+        return True
+    ext = normalize_extension(Path(str(filename).strip()).suffix)
+    return ext in allowed_extensions
+
+
+def format_allowed_extensions(allowed_extensions: tuple[str, ...] | None) -> str:
+    if allowed_extensions is None:
+        return "全部允许"
+    return ", ".join(allowed_extensions)
 
 
 def resolve_course_template(
@@ -496,6 +577,7 @@ def analyze_latest_uploaded_filename_uniqueness(
     df: pd.DataFrame,
     col_time: str,
     col_file: str,
+    allowed_extensions: tuple[str, ...] | None,
 ) -> tuple[int, int, dict[str, int]]:
     df_latest = (
         df.sort_values(by=col_time)
@@ -509,6 +591,7 @@ def analyze_latest_uploaded_filename_uniqueness(
         .map(str.strip)
     )
     files = files[files != ""]
+    files = files[files.map(lambda name: is_allowed_attachment_filename(name, allowed_extensions))]
     counts = files.value_counts()
     duplicates = counts[counts > 1]
     return len(files), files.nunique(), duplicates.to_dict()
@@ -540,6 +623,35 @@ def build_missing_attachment_summary(stat: dict[str, Any]) -> dict[str, Any]:
     }
     if total > 0:
         summary["同步提示"] = "检测到表格有提交记录但本地未找到对应附件，请先同步企业微信微盘后重跑本课程区间。"
+    return summary
+
+
+def build_invalid_attachment_summary(stat: dict[str, Any]) -> dict[str, Any]:
+    by_class: dict[str, list[str]] = {}
+    class_stats = stat.get("班级统计", {})
+    if isinstance(class_stats, dict):
+        for class_name, class_stat in class_stats.items():
+            if not isinstance(class_stat, dict):
+                continue
+            invalid_raw = class_stat.get("无效附件名单", [])
+            if not isinstance(invalid_raw, list):
+                continue
+            invalid = sorted({str(x).strip() for x in invalid_raw if str(x).strip()})
+            if invalid:
+                by_class[str(class_name)] = invalid
+    other_invalid_raw = stat.get("其他无效附件名单", [])
+    if isinstance(other_invalid_raw, list):
+        other_invalid = sorted({str(x).strip() for x in other_invalid_raw if str(x).strip()})
+        if other_invalid:
+            by_class["其他"] = other_invalid
+
+    total = sum(len(v) for v in by_class.values())
+    summary: dict[str, Any] = {
+        "总人数": total,
+        "班级统计": by_class,
+    }
+    if total > 0:
+        summary["判定规则"] = f"仅以下后缀算提交: {format_allowed_extensions(stat.get('有效提交后缀配置'))}"
     return summary
 
 
@@ -610,6 +722,274 @@ def write_missing_attachment_report(
     return report_path, total
 
 
+def write_invalid_attachment_report(
+    stats_dir: Path,
+    homework_label: str,
+    stat: dict[str, Any],
+) -> tuple[Path | None, int]:
+    summary = build_invalid_attachment_summary(stat)
+    total = int(summary.get("总人数", 0))
+    report_path = stats_dir / f"{homework_label}.invalid_attachments.txt"
+
+    if total <= 0:
+        if report_path.exists():
+            report_path.unlink()
+        return None, 0
+
+    by_class = summary.get("班级统计", {})
+    lines: list[str] = [
+        f"课程: {stat.get('课程', '')}",
+        f"作业: {homework_label}",
+        f"无效附件人数: {total}",
+        f"有效提交后缀: {format_allowed_extensions(stat.get('有效提交后缀配置'))}",
+        "",
+        "以下同学在收集表中有提交记录，也能在本地找到附件，但附件后缀不在有效提交白名单中：",
+    ]
+    if isinstance(by_class, dict):
+        for class_name in sorted(by_class.keys()):
+            lines.append(f"- {class_name}")
+            for student_no in by_class[class_name]:
+                lines.append(f"  - {student_no}")
+    lines.extend(
+        [
+            "",
+            "详细信息：",
+        ]
+    )
+    details = stat.get("无效附件详情", [])
+    if isinstance(details, list) and details:
+        for row in details:
+            if not isinstance(row, dict):
+                continue
+            cls = str(row.get("班级", "")).strip()
+            student_no = str(row.get("学号", "")).strip()
+            name = str(row.get("姓名", "")).strip()
+            raw_field = str(row.get("原始上传字段", "")).strip()
+            actual_file = str(row.get("实际附件名", "")).strip()
+            actual_ext = str(row.get("实际后缀", "")).strip()
+            lines.append(f"- {cls} {student_no} {name}".strip())
+            if actual_file:
+                lines.append(f"  实际附件名: {actual_file}")
+            if actual_ext:
+                lines.append(f"  实际后缀: {actual_ext}")
+            if raw_field:
+                lines.append(f"  原始上传字段: {raw_field}")
+    else:
+        lines.append("- 无")
+    lines.extend(
+        [
+            "",
+            "处理建议：",
+            "1. 要求学生重新上传文档类附件，或按需要调整 local.config.json 中的有效提交后缀白名单。",
+            "2. 重新运行本课程对应 --from --to 区间，刷新统计结果。",
+        ]
+    )
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return report_path, total
+
+
+def build_uploaded_homework_refs(
+    df: pd.DataFrame,
+    col_file: str,
+) -> dict[str, set[str]]:
+    refs: dict[str, set[str]] = {}
+    for _, row in df.iterrows():
+        uploaded_name = normalize_uploaded_filename(row[col_file])
+        if not uploaded_name:
+            continue
+        key = normalize_filename_key(uploaded_name)
+        homework_label = str(row.get("_homework_label", "")).strip()
+        if not key or not homework_label:
+            continue
+        refs.setdefault(key, set()).add(homework_label)
+    return refs
+
+
+def write_source_attachment_cleanup_report(
+    stats_dir: Path,
+    homework_label: str,
+    report: dict[str, Any],
+) -> Path:
+    report_path = stats_dir / f"{homework_label}.source_attachment_cleanup.json"
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    return report_path
+
+
+def execute_source_attachment_cleanup(
+    *,
+    df: pd.DataFrame,
+    homework_label: str,
+    course_name: str,
+    col_name: str,
+    col_time: str,
+    col_file: str,
+    attachments_dir: Path,
+    attachment_lookup: dict[str, str],
+    duplicate_lookup: dict[str, list[str]],
+    uploaded_homework_refs: dict[str, set[str]],
+    stats_dir: Path,
+    mode: str,
+) -> tuple[Path, dict[str, Any]]:
+    if mode not in {"dry-run", "apply"}:
+        raise ValueError(f"未知清理模式: {mode}")
+
+    df_hw = df[df["_homework_label"] == homework_label].copy()
+    df_hw = df_hw.sort_values(by=col_time)
+    total_rows = len(df_hw)
+
+    unique_entries: dict[str, dict[str, Any]] = {}
+    non_empty_rows = 0
+    for _, row in df_hw.iterrows():
+        uploaded_name = normalize_uploaded_filename(row[col_file])
+        if not uploaded_name:
+            continue
+        non_empty_rows += 1
+        key = normalize_filename_key(uploaded_name)
+        entry = unique_entries.setdefault(
+            key,
+            {
+                "附件键": key,
+                "Excel附件名": uploaded_name,
+                "原始上传字段": [],
+                "引用记录": [],
+            },
+        )
+        raw_field = str(row[col_file]).strip()
+        if raw_field and raw_field not in entry["原始上传字段"]:
+            entry["原始上传字段"].append(raw_field)
+        record = {
+            "姓名": str(row[col_name]).strip(),
+            "提交时间": format_datetime(row[col_time]),
+        }
+        if record not in entry["引用记录"]:
+            entry["引用记录"].append(record)
+
+    delete_candidates: list[dict[str, Any]] = []
+    protected: list[dict[str, Any]] = []
+    unresolved: list[dict[str, Any]] = []
+    missing_local: list[dict[str, Any]] = []
+    ambiguous_local: list[dict[str, Any]] = []
+
+    for key, entry in sorted(unique_entries.items()):
+        other_homeworks = sorted(uploaded_homework_refs.get(key, set()) - {homework_label}, key=parse_homework_order)
+        if other_homeworks:
+            protected.append(
+                {
+                    **entry,
+                    "保护原因": "其他作业仍在引用同名附件",
+                    "引用作业": other_homeworks,
+                }
+            )
+            continue
+
+        if key in duplicate_lookup:
+            ambiguous_local.append(
+                {
+                    **entry,
+                    "保护原因": "本地存在同名歧义附件",
+                    "本地候选附件名": duplicate_lookup[key],
+                }
+            )
+            continue
+
+        target_file = attachment_lookup.get(key, "")
+        if not target_file:
+            unresolved.append(
+                {
+                    **entry,
+                    "保护原因": "Excel 中记录了附件名，但当前本地目录未匹配到同名文件",
+                }
+            )
+            continue
+
+        src_path = attachments_dir / target_file
+        if not src_path.exists():
+            missing_local.append(
+                {
+                    **entry,
+                    "本地附件名": target_file,
+                    "保护原因": "本地目录中该文件已不存在",
+                }
+            )
+            continue
+
+        delete_candidates.append(
+            {
+                **entry,
+                "本地附件名": target_file,
+                "本地绝对路径": str(src_path.resolve()),
+            }
+        )
+
+    deleted: list[str] = []
+    delete_failures: list[dict[str, Any]] = []
+    attachments_root = attachments_dir.resolve()
+    if mode == "apply":
+        for item in delete_candidates:
+            src_path = Path(str(item["本地绝对路径"])).resolve()
+            try:
+                src_path.relative_to(attachments_root)
+            except ValueError:
+                delete_failures.append(
+                    {
+                        "本地附件名": item["本地附件名"],
+                        "原因": "目标文件不在课程附件目录内，已拒绝删除",
+                    }
+                )
+                continue
+            if not src_path.exists():
+                delete_failures.append(
+                    {
+                        "本地附件名": item["本地附件名"],
+                        "原因": "执行删除时文件已不存在",
+                    }
+                )
+                continue
+            try:
+                src_path.unlink()
+                deleted.append(str(item["本地附件名"]))
+            except OSError as err:
+                delete_failures.append(
+                    {
+                        "本地附件名": item["本地附件名"],
+                        "原因": str(err),
+                    }
+                )
+
+    report: dict[str, Any] = {
+        "课程": course_name,
+        "作业": homework_label,
+        "模式": mode,
+        "统计生成时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "附件目录": str(attachments_root),
+        "汇总": {
+            "Excel记录总数": total_rows,
+            "Excel非空附件记录数": non_empty_rows,
+            "Excel唯一附件数": len(unique_entries),
+            "计划删除附件数": len(delete_candidates),
+            "实际删除附件数": len(deleted),
+            "跨作业保护附件数": len(protected),
+            "本地歧义附件数": len(ambiguous_local),
+            "未匹配附件数": len(unresolved),
+            "本地已不存在附件数": len(missing_local),
+            "删除失败附件数": len(delete_failures),
+        },
+        "计划删除附件": delete_candidates,
+        "实际删除附件": deleted,
+        "跨作业保护附件": protected,
+        "本地歧义附件": ambiguous_local,
+        "未匹配附件": unresolved,
+        "本地已不存在附件": missing_local,
+        "删除失败附件": delete_failures,
+    }
+    report_path = write_source_attachment_cleanup_report(
+        stats_dir=stats_dir,
+        homework_label=homework_label,
+        report=report,
+    )
+    return report_path, report
+
+
 def load_existing_course_homework_stats(
     public_root: Path,
     course_name: str,
@@ -661,6 +1041,7 @@ def make_homework_stat(
     duplicate_lookup: dict[str, list[str]],
     homework_output_dir: Path,
     output_filename_template: str,
+    allowed_submission_extensions: tuple[str, ...] | None,
 ) -> dict[str, Any] | None:
     df_hw = df[df["_homework_label"] == homework_label].copy()
     if df_hw.empty:
@@ -668,7 +1049,7 @@ def make_homework_stat(
 
     df_latest = df_hw.sort_values(by=col_time).drop_duplicates(subset=["_name_norm"], keep="last")
     latest_by_name = {row["_name_norm"]: row for _, row in df_latest.iterrows()}
-    latest_submit_time = format_datetime(df_hw[col_time].max())
+    latest_record_time = format_datetime(df_hw[col_time].max())
     homework_order = parse_homework_order(homework_label)
 
     if homework_output_dir.exists():
@@ -682,21 +1063,30 @@ def make_homework_stat(
     stat: dict[str, Any] = {
         "作业": homework_label,
         "课程": course_name,
-        "最后提交时间": latest_submit_time,
+        "最后提交时间": "",
+        "最后收集记录时间": latest_record_time,
         "统计生成时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "总班级数": len(all_classes),
+        "有效提交后缀配置": (
+            list(allowed_submission_extensions) if allowed_submission_extensions is not None else None
+        ),
         "班级统计": {},
     }
 
     total_submit = 0
     total_expected = 0
+    total_invalid = 0
+    total_attachment_missing = 0
+    valid_submit_times: list[Any] = []
     attachment_missing_details: list[dict[str, Any]] = []
+    invalid_attachment_details: list[dict[str, Any]] = []
 
     for class_name in all_classes:
         class_students = students_by_class[class_name]
         submitted: list[str] = []
         not_submitted: list[str] = []
         attachment_missing: list[str] = []
+        invalid_attachment: list[str] = []
 
         for student in class_students:
             student_name = student["姓名"]
@@ -708,7 +1098,6 @@ def make_homework_stat(
                 not_submitted.append(student_no)
                 continue
 
-            submitted.append(student_no)
             person_name = str(row[col_name])
             uploaded_value = str(row[col_file]).strip()
             target_file, candidate_files = resolve_attachment_filename(
@@ -723,6 +1112,7 @@ def make_homework_stat(
                     print(f"      候选附件名: {' | '.join(candidate_files)}")
                 if uploaded_value:
                     print(f"      原始上传字段: {uploaded_value}")
+                not_submitted.append(student_no)
                 attachment_missing.append(student_no)
                 attachment_missing_details.append(
                     {
@@ -738,6 +1128,7 @@ def make_homework_stat(
             src_path = attachments_dir / target_file
             if not src_path.exists():
                 print(f"  [!] 已交但附件不存在: [{person_name}/{student_no}] -> '{target_file}'")
+                not_submitted.append(student_no)
                 attachment_missing.append(student_no)
                 attachment_missing_details.append(
                     {
@@ -749,7 +1140,26 @@ def make_homework_stat(
                     }
                 )
                 continue
-            ext = src_path.suffix
+
+            ext = normalize_extension(src_path.suffix)
+            if allowed_submission_extensions is not None and ext not in allowed_submission_extensions:
+                print(f"  [!] 附件后缀不计入提交: [{person_name}/{student_no}] -> '{target_file}' ({ext or '无后缀'})")
+                not_submitted.append(student_no)
+                invalid_attachment.append(student_no)
+                invalid_attachment_details.append(
+                    {
+                        "班级": class_name,
+                        "学号": student_no,
+                        "姓名": person_name,
+                        "实际附件名": target_file,
+                        "实际后缀": ext,
+                        "原始上传字段": uploaded_value,
+                    }
+                )
+                continue
+
+            submitted.append(student_no)
+            valid_submit_times.append(row[col_time])
             renamed = build_output_filename(
                 template=output_filename_template,
                 student_no=student_no,
@@ -770,8 +1180,12 @@ def make_homework_stat(
 
         expected_count = len(class_students)
         submit_count = len(submitted)
+        missing_count = len(attachment_missing)
+        invalid_count = len(invalid_attachment)
         total_expected += expected_count
         total_submit += submit_count
+        total_attachment_missing += missing_count
+        total_invalid += invalid_count
 
         stat["班级统计"][class_name] = {
             "应交人数": expected_count,
@@ -780,11 +1194,15 @@ def make_homework_stat(
             "提交率": round((submit_count / expected_count) if expected_count else 0, 4),
             "已交名单": submitted,
             "未交名单": not_submitted,
+            "已交但附件缺失人数": missing_count,
             "已交但附件缺失名单": sorted(attachment_missing),
+            "无效附件人数": invalid_count,
+            "无效附件名单": sorted(invalid_attachment),
         }
 
     other_submitted: list[str] = []
     other_missing: list[str] = []
+    other_invalid: list[str] = []
     other_dir = homework_output_dir / "其他"
     for student in other_students_by_name.values():
         student_name_norm = student["姓名标准化"]
@@ -793,7 +1211,6 @@ def make_homework_stat(
             continue
         student_no = student["学号"]
         student_name = student["姓名"]
-        other_submitted.append(student_no)
 
         uploaded_value = str(row[col_file]).strip()
         target_file, candidate_files = resolve_attachment_filename(
@@ -836,7 +1253,25 @@ def make_homework_stat(
 
         if not other_dir.exists():
             other_dir.mkdir(parents=True, exist_ok=True)
-        ext = src_path.suffix
+
+        ext = normalize_extension(src_path.suffix)
+        if allowed_submission_extensions is not None and ext not in allowed_submission_extensions:
+            print(f"  [!] 其他同学附件后缀不计入提交: [{student_name}/{student_no}] -> '{target_file}' ({ext or '无后缀'})")
+            other_invalid.append(student_no)
+            invalid_attachment_details.append(
+                {
+                    "班级": "其他",
+                    "学号": student_no,
+                    "姓名": student_name,
+                    "实际附件名": target_file,
+                    "实际后缀": ext,
+                    "原始上传字段": uploaded_value,
+                }
+            )
+            continue
+
+        other_submitted.append(student_no)
+        valid_submit_times.append(row[col_time])
         renamed = build_output_filename(
             template=output_filename_template,
             student_no=student_no,
@@ -855,18 +1290,26 @@ def make_homework_stat(
             )
         shutil.copy2(src_path, dst_path)
 
+    if valid_submit_times:
+        stat["最后提交时间"] = format_datetime(max(valid_submit_times))
     stat["其他已交名单"] = sorted(set(other_submitted))
     stat["其他已交但附件缺失名单"] = sorted(set(other_missing))
+    stat["其他无效附件名单"] = sorted(set(other_invalid))
 
     stat["汇总"] = {
         "应交总人数": total_expected,
         "已交总人数": total_submit,
         "未交总人数": total_expected - total_submit,
         "总提交率": round((total_submit / total_expected) if total_expected else 0, 4),
+        "已交但附件缺失总人数": total_attachment_missing,
+        "无效附件总人数": total_invalid,
     }
     stat["附件缺失"] = build_missing_attachment_summary(stat)
+    stat["无效附件"] = build_invalid_attachment_summary(stat)
     if attachment_missing_details:
         stat["附件缺失详情"] = attachment_missing_details
+    if invalid_attachment_details:
+        stat["无效附件详情"] = invalid_attachment_details
     return stat
 
 
@@ -897,6 +1340,7 @@ def write_course_web_data(
         hw_payload = dict(hw_stat)
         # 保持前端公开数据最小化：缺失详情仅用于本地排障，不对外发布。
         hw_payload.pop("附件缺失详情", None)
+        hw_payload.pop("无效附件详情", None)
         hw_payload.setdefault("作业", hw_label)
         hw_payload.setdefault("课程", course_name)
         hw_payload["更新时间"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -986,6 +1430,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-root", default="", help="输出根目录（会在其下创建课程目录）")
     parser.add_argument("--web-data-root", default="", help="webapp 课程 JSON 输出目录")
     parser.add_argument("--course-index", default="", help="webapp 课程索引 JSON 路径")
+    parser.add_argument(
+        "--cleanup-source-attachments",
+        choices=["off", "dry-run", "apply"],
+        default="off",
+        help="按 Excel 中当前区间作业的全部附件记录清理课程同步目录中的源文件",
+    )
+    parser.add_argument(
+        "--cleanup-only",
+        action="store_true",
+        help="仅执行源附件清理，不重跑提取和 web 数据输出",
+    )
     return parser.parse_args()
 
 
@@ -1076,25 +1531,28 @@ def main() -> None:
         course_name,
         "{course_name}-{homework_label}",
     )
+    allowed_submission_extensions = resolve_course_extension_allowlist(
+        local_cfg,
+        "allowed_submission_extensions",
+        course_name,
+        DEFAULT_ALLOWED_SUBMISSION_EXTENSIONS,
+    )
     zip_enabled = parse_bool_setting(local_cfg.get("zip_enabled"), True)
+    cleanup_mode = args.cleanup_source_attachments
+    if args.cleanup_only and cleanup_mode == "off":
+        raise ValueError("--cleanup-only 必须搭配 --cleanup-source-attachments dry-run/apply 使用。")
 
     print(f">>> 课程: {course_name}")
     print(f">>> Excel: {excel_path}")
     print(f">>> 附件目录: {attachments_dir}")
     print(f">>> 输出命名模板: {output_filename_template}")
+    print(f">>> 有效提交后缀: {format_allowed_extensions(allowed_submission_extensions)}")
+    if args.cleanup_only:
+        print(f">>> 运行模式: 仅清理源附件（{cleanup_mode}）")
     if zip_enabled:
         print(f">>> 压缩包模板: {zip_name_template}")
     else:
         print(">>> 压缩包输出: 已关闭（zip_enabled=false）")
-
-    students_by_class, students_by_name, other_students_by_name = load_students(
-        students_json_path=students_path,
-        other_students_json_path=other_students_path if other_students_text else None,
-    )
-    if other_students_by_name:
-        print(f">>> 其他名单人数: {len(other_students_by_name)}")
-    if not students_by_class:
-        raise ValueError("学生名单为空，无法统计提交情况。")
 
     df = pd.read_excel(excel_path)
     col_name = next((c for c in df.columns if "填写人" in c), None)
@@ -1105,14 +1563,6 @@ def main() -> None:
     if not all([col_name, col_time, col_hw, col_file]):
         raise ValueError("无法在Excel中找到需要的列，请检查文件内容。")
 
-    detected_classes = detect_classes_from_excel(df, col_name, students_by_name)
-    target_classes, cfg_changed = resolve_course_classes(local_cfg, course_name, detected_classes)
-    students_by_class = scope_students_by_classes(students_by_class, target_classes)
-    print(f">>> 统计班级: {', '.join(sorted(students_by_class.keys()))}")
-    if cfg_changed:
-        save_local_config(local_config_path, local_cfg)
-        print(f">>> 已自动更新课程班级配置: {local_config_path}")
-
     df = df.copy()
     df[col_time] = pd.to_datetime(df[col_time], errors="coerce")
     df["_homework_label"] = df[col_hw].astype(str).map(normalize_homework_label)
@@ -1121,26 +1571,6 @@ def main() -> None:
         [x for x in df["_homework_label"].dropna().unique() if str(x).strip()],
         key=parse_homework_order,
     )
-    latest_file_total, latest_file_unique, latest_file_duplicates = analyze_latest_uploaded_filename_uniqueness(
-        df=df,
-        col_time=col_time,
-        col_file=col_file,
-    )
-    print(
-        ">>> Excel附件名唯一性（按每位同学每次作业最新记录）:"
-        f" 非空={latest_file_total}, 唯一={latest_file_unique}, 重复={len(latest_file_duplicates)}"
-    )
-    if latest_file_duplicates:
-        print("  [!] 检测到重复附件名（将标记为歧义并计入附件缺失）：")
-        for file_name, count in sorted(latest_file_duplicates.items(), key=lambda kv: kv[1], reverse=True)[:10]:
-            print(f"      - {file_name} x{count}")
-        duplicate_preview = ", ".join(
-            [f"{name} x{count}" for name, count in sorted(latest_file_duplicates.items(), key=lambda kv: kv[1], reverse=True)[:10]]
-        )
-        raise ValueError(
-            "Excel 最新记录存在重复附件名，无法保证一一匹配，请先修正命名后重跑。"
-            f"示例: {duplicate_preview}"
-        )
 
     attachment_lookup, duplicate_lookup = build_attachment_lookup(attachments_dir)
     print(
@@ -1161,6 +1591,88 @@ def main() -> None:
     stats_dir = course_out_dir / "stats"
     stats_dir.mkdir(parents=True, exist_ok=True)
 
+    print(f">>> 处理作业区间: 第{from_order}次 到 第{to_order}次")
+    if homework_labels:
+        print(f">>> Excel检测到作业: {', '.join(homework_labels)}")
+    else:
+        print(">>> 该课程 Excel 暂无作业记录，将仅保留区间外冻结数据。")
+
+    range_homework_labels = [
+        hw for hw in homework_labels if from_order <= parse_homework_order(hw) <= to_order
+    ]
+    uploaded_homework_refs = build_uploaded_homework_refs(df=df, col_file=col_file)
+
+    if args.cleanup_only:
+        cleanup_reports: list[tuple[str, Path, dict[str, Any]]] = []
+        for hw in range_homework_labels:
+            report_path, cleanup_report = execute_source_attachment_cleanup(
+                df=df,
+                homework_label=hw,
+                course_name=course_name,
+                col_name=col_name,
+                col_time=col_time,
+                col_file=col_file,
+                attachments_dir=attachments_dir,
+                attachment_lookup=attachment_lookup,
+                duplicate_lookup=duplicate_lookup,
+                uploaded_homework_refs=uploaded_homework_refs,
+                stats_dir=stats_dir,
+                mode=cleanup_mode,
+            )
+            cleanup_reports.append((hw, report_path, cleanup_report))
+        print("\n源附件清理完成！")
+        if not cleanup_reports:
+            print("- 当前区间在 Excel 中没有可清理的作业记录。")
+            return
+        for hw, report_path, cleanup_report in cleanup_reports:
+            summary = cleanup_report.get("汇总", {})
+            print(
+                f"- {hw}: 计划删除 {summary.get('计划删除附件数', 0)}，"
+                f"实际删除 {summary.get('实际删除附件数', 0)}，"
+                f"跨作业保护 {summary.get('跨作业保护附件数', 0)}，"
+                f"报告 {report_path}"
+            )
+        return
+
+    students_by_class, students_by_name, other_students_by_name = load_students(
+        students_json_path=students_path,
+        other_students_json_path=other_students_path if other_students_text else None,
+    )
+    if other_students_by_name:
+        print(f">>> 其他名单人数: {len(other_students_by_name)}")
+    if not students_by_class:
+        raise ValueError("学生名单为空，无法统计提交情况。")
+
+    detected_classes = detect_classes_from_excel(df, col_name, students_by_name)
+    target_classes, cfg_changed = resolve_course_classes(local_cfg, course_name, detected_classes)
+    students_by_class = scope_students_by_classes(students_by_class, target_classes)
+    print(f">>> 统计班级: {', '.join(sorted(students_by_class.keys()))}")
+    if cfg_changed:
+        save_local_config(local_config_path, local_cfg)
+        print(f">>> 已自动更新课程班级配置: {local_config_path}")
+
+    latest_file_total, latest_file_unique, latest_file_duplicates = analyze_latest_uploaded_filename_uniqueness(
+        df=df,
+        col_time=col_time,
+        col_file=col_file,
+        allowed_extensions=allowed_submission_extensions,
+    )
+    print(
+        ">>> Excel有效附件名唯一性（按每位同学每次作业最新记录）:"
+        f" 非空={latest_file_total}, 唯一={latest_file_unique}, 重复={len(latest_file_duplicates)}"
+    )
+    if latest_file_duplicates:
+        print("  [!] 检测到重复的有效附件名（将标记为歧义并阻止提取）：")
+        for file_name, count in sorted(latest_file_duplicates.items(), key=lambda kv: kv[1], reverse=True)[:10]:
+            print(f"      - {file_name} x{count}")
+        duplicate_preview = ", ".join(
+            [f"{name} x{count}" for name, count in sorted(latest_file_duplicates.items(), key=lambda kv: kv[1], reverse=True)[:10]]
+        )
+        raise ValueError(
+            "Excel 最新记录存在重复的有效附件名，无法保证一一匹配，请先修正命名后重跑。"
+            f"示例: {duplicate_preview}"
+        )
+
     existing_stats = load_existing_course_homework_stats(
         public_root=course_index_path.parent,
         course_name=course_name,
@@ -1171,16 +1683,9 @@ def main() -> None:
         if order < from_order or order > to_order:
             all_stats[hw] = stat
 
-    print(f">>> 处理作业区间: 第{from_order}次 到 第{to_order}次")
-    if homework_labels:
-        print(f">>> Excel检测到作业: {', '.join(homework_labels)}")
-    else:
-        print(">>> 该课程 Excel 暂无作业记录，将仅保留区间外冻结数据。")
-
-    range_homework_labels = [
-        hw for hw in homework_labels if from_order <= parse_homework_order(hw) <= to_order
-    ]
     missing_attachment_reports: list[tuple[str, Path, int]] = []
+    invalid_attachment_reports: list[tuple[str, Path, int]] = []
+    cleanup_reports: list[tuple[str, Path, dict[str, Any]]] = []
     generated_zip_files: list[Path] = []
     zip_output_dir = course_out_dir / "zip"
 
@@ -1201,6 +1706,7 @@ def main() -> None:
             duplicate_lookup=duplicate_lookup,
             homework_output_dir=hw_dir,
             output_filename_template=output_filename_template,
+            allowed_submission_extensions=allowed_submission_extensions,
         )
         if stat is None:
             if hw in existing_stats:
@@ -1258,6 +1764,33 @@ def main() -> None:
                     print(detail_line)
             print("  [!] 请先同步企业微信微盘，再重跑该课程区间。")
 
+        invalid_report_path, invalid_total = write_invalid_attachment_report(
+            stats_dir=stats_dir,
+            homework_label=hw,
+            stat=stat,
+        )
+        if invalid_report_path is not None and invalid_total > 0:
+            invalid_attachment_reports.append((hw, invalid_report_path, invalid_total))
+            print(f"  [!] {hw} 检测到无效附件 {invalid_total} 人")
+            print(f"  [!] 无效附件报告: {invalid_report_path}")
+            invalid_details = stat.get("无效附件详情", [])
+            if isinstance(invalid_details, list):
+                for row in invalid_details:
+                    if not isinstance(row, dict):
+                        continue
+                    cls = str(row.get("班级", "")).strip()
+                    student_no = str(row.get("学号", "")).strip()
+                    name = str(row.get("姓名", "")).strip()
+                    actual_file = str(row.get("实际附件名", "")).strip()
+                    actual_ext = str(row.get("实际后缀", "")).strip()
+                    detail_line = f"      - {cls} {student_no} {name}".rstrip()
+                    if actual_file:
+                        detail_line += f" | 实际附件: {actual_file}"
+                    if actual_ext:
+                        detail_line += f" | 后缀: {actual_ext}"
+                    print(detail_line)
+            print("  [!] 这些附件不会计入提交率；如有需要，请修改配置白名单或要求学生重传。")
+
     in_range_existing_missing = [
         hw
         for hw in existing_stats.keys()
@@ -1273,6 +1806,36 @@ def main() -> None:
         print("\n>>> 附件缺失汇总（请先同步微盘后重跑）")
         for hw, report_path, count in missing_attachment_reports:
             print(f"- {hw}: 缺失 {count} 人 -> {report_path}")
+    if invalid_attachment_reports:
+        print("\n>>> 无效附件汇总（未计入提交率）")
+        for hw, report_path, count in invalid_attachment_reports:
+            print(f"- {hw}: 无效 {count} 人 -> {report_path}")
+    if cleanup_mode != "off":
+        for hw in range_homework_labels:
+            report_path, cleanup_report = execute_source_attachment_cleanup(
+                df=df,
+                homework_label=hw,
+                course_name=course_name,
+                col_name=col_name,
+                col_time=col_time,
+                col_file=col_file,
+                attachments_dir=attachments_dir,
+                attachment_lookup=attachment_lookup,
+                duplicate_lookup=duplicate_lookup,
+                uploaded_homework_refs=uploaded_homework_refs,
+                stats_dir=stats_dir,
+                mode=cleanup_mode,
+            )
+            cleanup_reports.append((hw, report_path, cleanup_report))
+    if cleanup_reports:
+        print(f"\n>>> 源附件清理汇总（模式: {cleanup_mode}）")
+        for hw, report_path, cleanup_report in cleanup_reports:
+            summary = cleanup_report.get("汇总", {})
+            print(
+                f"- {hw}: 计划删除 {summary.get('计划删除附件数', 0)}，"
+                f"实际删除 {summary.get('实际删除附件数', 0)}，"
+                f"跨作业保护 {summary.get('跨作业保护附件数', 0)} -> {report_path}"
+            )
 
     summary_path = course_out_dir / "course_summary.json"
     summary_data = {
