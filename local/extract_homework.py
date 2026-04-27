@@ -6,6 +6,7 @@
 # ]
 # ///
 import argparse
+import hashlib
 import json
 import re
 import shutil
@@ -64,9 +65,14 @@ def sanitize_filename_component(text: str) -> str:
     return re.sub(r'[\\/:*?"<>|]', "_", str(text)).strip()
 
 
-def parse_homework_order(hw_name: str) -> int:
+def extract_homework_number(hw_name: str) -> int | None:
     match = re.search(r"(\d+)", str(hw_name))
-    return int(match.group(1)) if match else 10**9
+    return int(match.group(1)) if match else None
+
+
+def parse_homework_order(hw_name: str) -> int:
+    order = extract_homework_number(hw_name)
+    return order if order is not None else 10**9
 
 
 def parse_bool_setting(value: Any, default: bool) -> bool:
@@ -200,15 +206,16 @@ def build_output_filename(
     homework_order: int,
     ext: str,
 ) -> str:
+    numeric_order = extract_homework_number(homework_label)
     context = {
         "student_no": sanitize_filename_component(student_no),
         "student_name": sanitize_filename_component(student_name),
         "class_name": sanitize_filename_component(class_name),
         "course_name": sanitize_filename_component(course_name),
         "homework_label": sanitize_filename_component(homework_label),
-        "homework_order": (homework_order if homework_order != 10**9 else 0),
+        "homework_order": (numeric_order if numeric_order is not None else 0),
         "report_title": (
-            f"实验报告{homework_order}" if homework_order != 10**9 else "实验报告"
+            f"实验报告{numeric_order}" if numeric_order is not None else sanitize_filename_component(homework_label)
         ),
         "ext": ext,
     }
@@ -228,10 +235,11 @@ def build_zip_filename(
     homework_label: str,
     homework_order: int,
 ) -> str:
+    numeric_order = extract_homework_number(homework_label)
     context = {
         "course_name": sanitize_filename_component(course_name),
         "homework_label": sanitize_filename_component(homework_label),
-        "homework_order": (homework_order if homework_order != 10**9 else 0),
+        "homework_order": (numeric_order if numeric_order is not None else 0),
     }
     rendered = render_template_text(template, context, "压缩包名")
     filename = sanitize_filename_component(rendered)
@@ -262,11 +270,36 @@ def create_homework_zip(
 
 
 def normalize_homework_label(value: str) -> str:
-    raw = str(value).strip()
-    match = re.search(r"(\d+)", raw)
-    if match:
-        return f"第{match.group(1)}次"
-    return raw
+    return re.sub(r"\s+", " ", str(value)).strip()
+
+
+def discover_homework_labels(df: pd.DataFrame) -> list[str]:
+    labels: list[str] = []
+    seen: set[str] = set()
+    for raw in df["_homework_label"].tolist():
+        label = str(raw).strip()
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        labels.append(label)
+    return labels
+
+
+def build_homework_path_tokens(labels: list[str]) -> dict[str, str]:
+    grouped: dict[str, list[str]] = {}
+    for label in labels:
+        base = sanitize_filename_component(label) or "作业"
+        grouped.setdefault(base, []).append(label)
+
+    tokens: dict[str, str] = {}
+    for base, label_list in grouped.items():
+        if len(label_list) == 1:
+            tokens[label_list[0]] = base
+            continue
+        for label in label_list:
+            digest = hashlib.sha1(label.encode("utf-8")).hexdigest()[:8]
+            tokens[label] = f"{base}-{digest}"
+    return tokens
 
 
 def normalize_uploaded_filename(value: Any) -> str:
@@ -622,7 +655,7 @@ def build_missing_attachment_summary(stat: dict[str, Any]) -> dict[str, Any]:
         "班级统计": by_class,
     }
     if total > 0:
-        summary["同步提示"] = "检测到表格有提交记录但本地未找到对应附件，请先同步企业微信微盘后重跑本课程区间。"
+        summary["同步提示"] = "检测到表格有提交记录但本地未找到对应附件，请先同步企业微信微盘后按同一作业标签重跑。"
     return summary
 
 
@@ -658,11 +691,12 @@ def build_invalid_attachment_summary(stat: dict[str, Any]) -> dict[str, Any]:
 def write_missing_attachment_report(
     stats_dir: Path,
     homework_label: str,
+    homework_token: str,
     stat: dict[str, Any],
 ) -> tuple[Path | None, int]:
     summary = build_missing_attachment_summary(stat)
     total = int(summary.get("总人数", 0))
-    report_path = stats_dir / f"{homework_label}.missing_attachments.txt"
+    report_path = stats_dir / f"{homework_token}.missing_attachments.txt"
 
     if total <= 0:
         if report_path.exists():
@@ -715,7 +749,7 @@ def write_missing_attachment_report(
             "",
             "处理建议：",
             "1. 打开企业微信微盘客户端，确认该课程“收集的文件”已同步完成。",
-            "2. 同步完成后，重跑本课程对应 --from --to 区间。",
+            "2. 同步完成后，按同一作业标签重跑本课程。",
         ]
     )
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -725,11 +759,12 @@ def write_missing_attachment_report(
 def write_invalid_attachment_report(
     stats_dir: Path,
     homework_label: str,
+    homework_token: str,
     stat: dict[str, Any],
 ) -> tuple[Path | None, int]:
     summary = build_invalid_attachment_summary(stat)
     total = int(summary.get("总人数", 0))
-    report_path = stats_dir / f"{homework_label}.invalid_attachments.txt"
+    report_path = stats_dir / f"{homework_token}.invalid_attachments.txt"
 
     if total <= 0:
         if report_path.exists():
@@ -781,7 +816,7 @@ def write_invalid_attachment_report(
             "",
             "处理建议：",
             "1. 要求学生重新上传文档类附件，或按需要调整 local.config.json 中的有效提交后缀白名单。",
-            "2. 重新运行本课程对应 --from --to 区间，刷新统计结果。",
+            "2. 重新运行本课程对应作业标签，刷新统计结果。",
         ]
     )
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -807,10 +842,10 @@ def build_uploaded_homework_refs(
 
 def write_source_attachment_cleanup_report(
     stats_dir: Path,
-    homework_label: str,
+    homework_token: str,
     report: dict[str, Any],
 ) -> Path:
-    report_path = stats_dir / f"{homework_label}.source_attachment_cleanup.json"
+    report_path = stats_dir / f"{homework_token}.source_attachment_cleanup.json"
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report_path
 
@@ -828,6 +863,7 @@ def execute_source_attachment_cleanup(
     duplicate_lookup: dict[str, list[str]],
     uploaded_homework_refs: dict[str, set[str]],
     stats_dir: Path,
+    homework_token: str,
     mode: str,
 ) -> tuple[Path, dict[str, Any]]:
     if mode not in {"dry-run", "apply"}:
@@ -984,7 +1020,7 @@ def execute_source_attachment_cleanup(
     }
     report_path = write_source_attachment_cleanup_report(
         stats_dir=stats_dir,
-        homework_label=homework_label,
+        homework_token=homework_token,
         report=report,
     )
     return report_path, report
@@ -1025,6 +1061,44 @@ def load_existing_course_homework_stats(
         if isinstance(hw_data, dict):
             normalized[hw_label] = hw_data
     return normalized
+
+
+def resolve_selected_homework_labels(
+    available_labels: list[str],
+    requested_labels: list[str],
+) -> list[str]:
+    normalized_requested = [normalize_homework_label(label) for label in requested_labels]
+    normalized_requested = [label for label in normalized_requested if label]
+    if not normalized_requested:
+        raise ValueError("至少需要指定一个作业标签。")
+
+    available_set = set(available_labels)
+    missing = [label for label in normalized_requested if label not in available_set]
+    if missing:
+        raise ValueError(f"以下作业标签未出现在当前 Excel 中: {', '.join(missing)}")
+
+    selected: list[str] = []
+    seen: set[str] = set()
+    for label in normalized_requested:
+        if label in seen:
+            continue
+        seen.add(label)
+        selected.append(label)
+    return selected
+
+
+def build_final_homework_label_order(
+    excel_labels: list[str],
+    existing_labels: list[str],
+) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for label in excel_labels + existing_labels:
+        if label in seen:
+            continue
+        seen.add(label)
+        ordered.append(label)
+    return ordered
 
 
 def make_homework_stat(
@@ -1318,22 +1392,23 @@ def write_course_web_data(
     course_index_path: Path,
     course_name: str,
     homework_stats: dict[str, dict[str, Any]],
+    ordered_homework_labels: list[str],
+    homework_tokens: dict[str, str],
 ) -> None:
     web_data_root.mkdir(parents=True, exist_ok=True)
     course_index_path.parent.mkdir(parents=True, exist_ok=True)
 
-    sorted_homework_items = sorted(homework_stats.items(), key=lambda kv: parse_homework_order(kv[0]))
     course_slug = sanitize_filename_component(course_name)
 
     keep_homework_filenames: set[str] = set()
     course_homework_list: list[dict[str, str]] = []
 
-    for hw_label, hw_stat in sorted_homework_items:
-        order = parse_homework_order(hw_label)
-        if order != 10**9:
-            hw_filename = f"{course_slug}.hw{order:03d}.json"
-        else:
-            hw_filename = f"{course_slug}.{sanitize_filename_component(hw_label)}.json"
+    for hw_label in ordered_homework_labels:
+        hw_stat = homework_stats.get(hw_label)
+        if hw_stat is None:
+            continue
+        homework_token = homework_tokens[hw_label]
+        hw_filename = f"{course_slug}.{homework_token}.json"
         keep_homework_filenames.add(hw_filename)
 
         hw_relative_path = f"data/{hw_filename}"
@@ -1350,7 +1425,10 @@ def write_course_web_data(
         )
         course_homework_list.append({"作业": hw_label, "数据文件": hw_relative_path})
 
-    for old_file in web_data_root.glob(f"{course_slug}.hw*.json"):
+    course_index_filename = f"{course_slug}.index.json"
+    for old_file in web_data_root.glob(f"{course_slug}.*.json"):
+        if old_file.name == course_index_filename:
+            continue
         if old_file.name in keep_homework_filenames:
             continue
         old_file.unlink()
@@ -1360,7 +1438,6 @@ def write_course_web_data(
     if legacy_course_file.exists():
         legacy_course_file.unlink()
 
-    course_index_filename = f"{course_slug}.index.json"
     course_relative_path = f"data/{course_index_filename}"
     course_data = {
         "课程": course_name,
@@ -1411,9 +1488,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--course", default="", help="课程名（默认自动检测，多个课程时必填）")
     parser.add_argument("--excel", default="", help="指定课程 Excel 路径，优先级高于 --course")
-    parser.add_argument("--from", dest="from_order", type=int, help="强制起始作业次序（包含）")
-    parser.add_argument("--to", dest="to_order", type=int, help="强制截止作业次序（包含）")
     parser.add_argument("--list-courses", action="store_true", help="仅列出 config 下可选课程")
+    parser.add_argument("--list-homework-labels", action="store_true", help="仅列出当前课程 Excel 中可选的作业标签")
+    parser.add_argument(
+        "--label",
+        dest="labels",
+        action="append",
+        default=[],
+        help="指定要处理的作业标签，可重复传入多次",
+    )
     parser.add_argument("--courses-dir", default="", help="课程 Excel 所在目录（默认读取配置项 courses_dir）")
     parser.add_argument(
         "--attachments-root",
@@ -1434,7 +1517,7 @@ def parse_args() -> argparse.Namespace:
         "--cleanup-source-attachments",
         choices=["off", "dry-run", "apply"],
         default="off",
-        help="按 Excel 中当前区间作业的全部附件记录清理课程同步目录中的源文件",
+        help="按 Excel 中当前所选作业标签的全部附件记录清理课程同步目录中的源文件",
     )
     parser.add_argument(
         "--cleanup-only",
@@ -1470,13 +1553,6 @@ def main() -> None:
         for name, path in courses.items():
             print(f"- {name} -> {path}")
         return
-
-    if args.from_order is None or args.to_order is None:
-        raise ValueError("必须显式传入 --from 和 --to，禁止默认全量运行。")
-    if args.from_order <= 0 or args.to_order <= 0:
-        raise ValueError("--from 和 --to 必须是正整数。")
-    if args.from_order > args.to_order:
-        raise ValueError("--from 不能大于 --to。")
 
     course_name, excel_path = choose_course_excel(courses, args.course, args.excel)
 
@@ -1567,9 +1643,19 @@ def main() -> None:
     df[col_time] = pd.to_datetime(df[col_time], errors="coerce")
     df["_homework_label"] = df[col_hw].astype(str).map(normalize_homework_label)
     df["_name_norm"] = df[col_name].astype(str).map(normalize_name)
-    homework_labels = sorted(
-        [x for x in df["_homework_label"].dropna().unique() if str(x).strip()],
-        key=parse_homework_order,
+    homework_labels = discover_homework_labels(df)
+    if args.list_homework_labels:
+        if not homework_labels:
+            print("当前课程 Excel 中没有可用的作业标签。")
+            return
+        print("可选作业标签:")
+        for idx, label in enumerate(homework_labels, start=1):
+            print(f"[{idx}] {label}")
+        return
+
+    selected_homework_labels = resolve_selected_homework_labels(
+        available_labels=homework_labels,
+        requested_labels=args.labels,
     )
 
     attachment_lookup, duplicate_lookup = build_attachment_lookup(attachments_dir)
@@ -1583,28 +1669,32 @@ def main() -> None:
             if idx >= 10:
                 break
             print(f"      - {key}: {' | '.join(names)}")
-    from_order = args.from_order
-    to_order = args.to_order
 
     course_out_dir = out_root / course_name
     course_out_dir.mkdir(parents=True, exist_ok=True)
     stats_dir = course_out_dir / "stats"
     stats_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f">>> 处理作业区间: 第{from_order}次 到 第{to_order}次")
     if homework_labels:
         print(f">>> Excel检测到作业: {', '.join(homework_labels)}")
     else:
-        print(">>> 该课程 Excel 暂无作业记录，将仅保留区间外冻结数据。")
+        print(">>> 该课程 Excel 暂无作业记录。")
+    print(f">>> 本次处理标签: {', '.join(selected_homework_labels)}")
 
-    range_homework_labels = [
-        hw for hw in homework_labels if from_order <= parse_homework_order(hw) <= to_order
-    ]
     uploaded_homework_refs = build_uploaded_homework_refs(df=df, col_file=col_file)
+    existing_stats = load_existing_course_homework_stats(
+        public_root=course_index_path.parent,
+        course_name=course_name,
+    )
+    final_homework_labels = build_final_homework_label_order(
+        excel_labels=homework_labels,
+        existing_labels=list(existing_stats.keys()),
+    )
+    homework_tokens = build_homework_path_tokens(final_homework_labels)
 
     if args.cleanup_only:
         cleanup_reports: list[tuple[str, Path, dict[str, Any]]] = []
-        for hw in range_homework_labels:
+        for hw in selected_homework_labels:
             report_path, cleanup_report = execute_source_attachment_cleanup(
                 df=df,
                 homework_label=hw,
@@ -1617,12 +1707,13 @@ def main() -> None:
                 duplicate_lookup=duplicate_lookup,
                 uploaded_homework_refs=uploaded_homework_refs,
                 stats_dir=stats_dir,
+                homework_token=homework_tokens[hw],
                 mode=cleanup_mode,
             )
             cleanup_reports.append((hw, report_path, cleanup_report))
         print("\n源附件清理完成！")
         if not cleanup_reports:
-            print("- 当前区间在 Excel 中没有可清理的作业记录。")
+            print("- 当前标签在 Excel 中没有可清理的作业记录。")
             return
         for hw, report_path, cleanup_report in cleanup_reports:
             summary = cleanup_report.get("汇总", {})
@@ -1673,14 +1764,9 @@ def main() -> None:
             f"示例: {duplicate_preview}"
         )
 
-    existing_stats = load_existing_course_homework_stats(
-        public_root=course_index_path.parent,
-        course_name=course_name,
-    )
     all_stats: dict[str, dict[str, Any]] = {}
     for hw, stat in existing_stats.items():
-        order = parse_homework_order(hw)
-        if order < from_order or order > to_order:
+        if hw not in selected_homework_labels:
             all_stats[hw] = stat
 
     missing_attachment_reports: list[tuple[str, Path, int]] = []
@@ -1689,9 +1775,10 @@ def main() -> None:
     generated_zip_files: list[Path] = []
     zip_output_dir = course_out_dir / "zip"
 
-    for hw in range_homework_labels:
+    for hw in selected_homework_labels:
         print(f"\n>>> 开始处理 {course_name} {hw}")
-        hw_dir = course_out_dir / f"{hw}作业"
+        hw_token = homework_tokens[hw]
+        hw_dir = course_out_dir / f"{hw_token}作业"
         stat = make_homework_stat(
             df=df,
             homework_label=hw,
@@ -1717,7 +1804,7 @@ def main() -> None:
             continue
 
         all_stats[hw] = stat
-        hw_stat_file = stats_dir / f"{hw}.json"
+        hw_stat_file = stats_dir / f"{hw_token}.json"
         hw_stat_file.write_text(json.dumps(stat, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"√ 已输出: {hw_stat_file}")
         if zip_enabled:
@@ -1738,6 +1825,7 @@ def main() -> None:
         missing_report_path, missing_total = write_missing_attachment_report(
             stats_dir=stats_dir,
             homework_label=hw,
+            homework_token=hw_token,
             stat=stat,
         )
         if missing_report_path is not None and missing_total > 0:
@@ -1762,11 +1850,12 @@ def main() -> None:
                     if candidates_text:
                         detail_line += f" | 候选附件: {candidates_text}"
                     print(detail_line)
-            print("  [!] 请先同步企业微信微盘，再重跑该课程区间。")
+            print("  [!] 请先同步企业微信微盘，再按同一作业标签重跑。")
 
         invalid_report_path, invalid_total = write_invalid_attachment_report(
             stats_dir=stats_dir,
             homework_label=hw,
+            homework_token=hw_token,
             stat=stat,
         )
         if invalid_report_path is not None and invalid_total > 0:
@@ -1791,17 +1880,8 @@ def main() -> None:
                     print(detail_line)
             print("  [!] 这些附件不会计入提交率；如有需要，请修改配置白名单或要求学生重传。")
 
-    in_range_existing_missing = [
-        hw
-        for hw in existing_stats.keys()
-        if from_order <= parse_homework_order(hw) <= to_order and hw not in range_homework_labels
-    ]
-    for hw in sorted(in_range_existing_missing, key=parse_homework_order):
-        print(f"  [!] {hw} 未出现在当前Excel中，保留历史统计。")
-        all_stats[hw] = existing_stats[hw]
-
     if not all_stats:
-        print("  [!] 当前区间内外均无可用统计，输出将为空。")
+        print("  [!] 当前课程无可用统计，输出将为空。")
     elif missing_attachment_reports:
         print("\n>>> 附件缺失汇总（请先同步微盘后重跑）")
         for hw, report_path, count in missing_attachment_reports:
@@ -1811,7 +1891,7 @@ def main() -> None:
         for hw, report_path, count in invalid_attachment_reports:
             print(f"- {hw}: 无效 {count} 人 -> {report_path}")
     if cleanup_mode != "off":
-        for hw in range_homework_labels:
+        for hw in selected_homework_labels:
             report_path, cleanup_report = execute_source_attachment_cleanup(
                 df=df,
                 homework_label=hw,
@@ -1824,6 +1904,7 @@ def main() -> None:
                 duplicate_lookup=duplicate_lookup,
                 uploaded_homework_refs=uploaded_homework_refs,
                 stats_dir=stats_dir,
+                homework_token=homework_tokens[hw],
                 mode=cleanup_mode,
             )
             cleanup_reports.append((hw, report_path, cleanup_report))
@@ -1841,7 +1922,7 @@ def main() -> None:
     summary_data = {
         "课程": course_name,
         "更新时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "作业列表": sorted(all_stats.keys(), key=parse_homework_order),
+        "作业列表": [label for label in final_homework_labels if label in all_stats],
         "统计文件目录": str(stats_dir),
     }
     if zip_enabled:
@@ -1854,6 +1935,8 @@ def main() -> None:
         course_index_path=course_index_path,
         course_name=course_name,
         homework_stats=all_stats,
+        ordered_homework_labels=final_homework_labels,
+        homework_tokens=homework_tokens,
     )
     manifest_result = rebuild_course_manifest(
         public_root=course_index_path.parent,

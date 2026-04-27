@@ -45,11 +45,6 @@ type CourseHomeworkIndex = {
   作业列表: CourseHomeworkRef[]
 }
 
-function parseHomeworkOrder(text: string): number {
-  const match = text.match(/(\d+)/)
-  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER
-}
-
 function clampRate(rate: number): number {
   if (Number.isNaN(rate)) return 0
   if (rate < 0) return 0
@@ -323,8 +318,15 @@ function App() {
   }, [courseHomeworkIndex])
 
   const homeworkKeys = useMemo(() => {
-    return Array.from(homeworkMap.keys()).sort((a, b) => parseHomeworkOrder(a) - parseHomeworkOrder(b))
-  }, [homeworkMap])
+    const keys: string[] = []
+    const seen = new Set<string>()
+    for (const item of courseHomeworkIndex?.作业列表 || []) {
+      if (seen.has(item.作业)) continue
+      seen.add(item.作业)
+      keys.push(item.作业)
+    }
+    return keys
+  }, [courseHomeworkIndex])
 
   const selectedKey = useMemo(() => {
     if (!homeworkKeys.length) return ''
@@ -545,7 +547,7 @@ function App() {
             <div>
               <label className="mb-2 flex items-center gap-2 text-sm text-slate-700" htmlFor="hw-select">
                 <AppIcon name="hash" className="h-4 w-4 text-indigo-700" />
-                作业序号
+                作业标签
               </label>
               <select
                 id="hw-select"

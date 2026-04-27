@@ -10,13 +10,14 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+import pandas as pd
+
 
 @dataclass
 class PlanItem:
     course: str
     excel: Path
-    from_order: int
-    to_order: int
+    labels: list[str]
 
 
 def load_config(path: Path) -> dict:
@@ -52,6 +53,29 @@ def discover_courses(courses_dir: Path) -> list[Path]:
     return files
 
 
+def normalize_homework_label(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value)).strip()
+
+
+def discover_homework_labels_from_excel(excel_path: Path) -> list[str]:
+    df = pd.read_excel(excel_path)
+    col_hw = next((c for c in df.columns if "本次提交的是哪次作业" in c), None)
+    if col_hw is None:
+        raise ValueError(f"Excel 中缺少“本次提交的是哪次作业”列: {excel_path}")
+
+    labels: list[str] = []
+    seen: set[str] = set()
+    for raw in df[col_hw].tolist():
+        label = normalize_homework_label(raw)
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        labels.append(label)
+    if not labels:
+        raise ValueError(f"Excel 中未发现可用作业标签: {excel_path}")
+    return labels
+
+
 def parse_selection(text: str, max_index: int) -> list[int]:
     raw = (text or "").strip()
     if raw.startswith("\ufeff"):
@@ -60,7 +84,7 @@ def parse_selection(text: str, max_index: int) -> list[int]:
         raw = raw[3:]
     raw = raw.lower().replace("，", ",").replace("、", ",")
     if not raw:
-        raise ValueError("未输入课程编号。")
+        raise ValueError("未输入编号。")
     if raw == "all":
         return list(range(1, max_index + 1))
 
@@ -72,7 +96,7 @@ def parse_selection(text: str, max_index: int) -> list[int]:
         if "-" in part:
             seg = part.split("-", 1)
             if len(seg) != 2 or (not seg[0].isdigit()) or (not seg[1].isdigit()):
-                raise ValueError(f"无法解析课程选择片段: '{part}'")
+                raise ValueError(f"无法解析编号选择片段: '{part}'")
             start, end = int(seg[0]), int(seg[1])
             if start > end:
                 raise ValueError(f"区间 '{part}' 非法（起点大于终点）。")
@@ -87,16 +111,8 @@ def parse_selection(text: str, max_index: int) -> list[int]:
                 raise ValueError(f"编号 '{i}' 超出范围 1-{max_index}。")
             picked.add(i)
             continue
-        raise ValueError(f"无法解析课程选择片段: '{part}'")
+        raise ValueError(f"无法解析编号选择片段: '{part}'")
     return sorted(picked)
-
-
-def read_positive_int(prompt: str) -> int:
-    while True:
-        raw = input(prompt).strip()
-        if raw.isdigit() and int(raw) > 0:
-            return int(raw)
-        print("请输入正整数。")
 
 
 def print_plan(items: list[PlanItem]) -> None:
@@ -106,14 +122,12 @@ def print_plan(items: list[PlanItem]) -> None:
         return
     max_course = max(len(i.course) for i in items)
     max_excel = max(len(str(i.excel)) for i in items)
-    header = f"{'Course'.ljust(max_course)}  {'Excel'.ljust(max_excel)}  From  To"
+    max_labels = max(len(" | ".join(i.labels)) for i in items)
+    header = f"{'Course'.ljust(max_course)}  {'Excel'.ljust(max_excel)}  {'Labels'.ljust(max_labels)}"
     print(header)
     print("-" * len(header))
     for item in items:
-        print(
-            f"{item.course.ljust(max_course)}  {str(item.excel).ljust(max_excel)}  "
-            f"{str(item.from_order).rjust(4)}  {str(item.to_order).rjust(2)}"
-        )
+        print(f"{item.course.ljust(max_course)}  {str(item.excel).ljust(max_excel)}  {' | '.join(item.labels).ljust(max_labels)}")
 
 
 def build_extract_cmd(
@@ -133,11 +147,9 @@ def build_extract_cmd(
         str(config_path),
         "--excel",
         str(item.excel),
-        "--from",
-        str(item.from_order),
-        "--to",
-        str(item.to_order),
     ]
+    for label in item.labels:
+        cmd.extend(["--label", label])
     if cleanup_mode != "off":
         cmd.extend(["--cleanup-source-attachments", cleanup_mode])
     if cleanup_only:
@@ -152,7 +164,7 @@ def run_extract(python_exe: Path, repo_root: Path, config_path: Path, item: Plan
         config_path=config_path,
         item=item,
     )
-    print(f"\n开始处理: {item.course} --from {item.from_order} --to {item.to_order}")
+    print(f"\n开始处理: {item.course} labels={', '.join(item.labels)}")
     proc = subprocess.run(cmd, cwd=repo_root)
     if proc.returncode == 0:
         print(f"处理完成: {item.course}")
@@ -170,7 +182,7 @@ def run_cleanup(python_exe: Path, repo_root: Path, config_path: Path, item: Plan
         cleanup_mode="apply",
         cleanup_only=True,
     )
-    print(f"\n开始清理源附件: {item.course} --from {item.from_order} --to {item.to_order}")
+    print(f"\n开始清理源附件: {item.course} labels={', '.join(item.labels)}")
     proc = subprocess.run(cmd, cwd=repo_root)
     if proc.returncode == 0:
         print(f"清理完成: {item.course}")
@@ -256,19 +268,25 @@ def main() -> int:
     plan: list[PlanItem] = []
     for idx in selected_indexes:
         file = courses[idx - 1]
-        print(f"\n配置区间: {file.stem}")
-        from_order = read_positive_int("  --from: ")
-        to_order = read_positive_int("  --to: ")
-        while from_order > to_order:
-            print("  from 不能大于 to，请重新输入。")
-            from_order = read_positive_int("  --from: ")
-            to_order = read_positive_int("  --to: ")
+        labels = discover_homework_labels_from_excel(file.resolve())
+        print(f"\n选择作业标签: {file.stem}")
+        for label_idx, label in enumerate(labels, start=1):
+            print(f"  [{label_idx}] {label}")
+
+        selected_label_indexes: list[int]
+        while True:
+            raw = input("  请选择作业编号（如 1,3-4 或 all）: ")
+            try:
+                selected_label_indexes = parse_selection(raw, len(labels))
+                break
+            except ValueError as err:
+                print(f"  {err}")
+
         plan.append(
             PlanItem(
                 course=file.stem,
                 excel=file.resolve(),
-                from_order=from_order,
-                to_order=to_order,
+                labels=[labels[i - 1] for i in selected_label_indexes],
             )
         )
 
@@ -297,8 +315,8 @@ def main() -> int:
 
     print("\n全部课程处理完成。")
     cleanup_confirm = input(
-        "\n是否删除本次处理区间在企业微信同步目录中的源附件？"
-        "这会按 Excel 对应作业的全部附件记录删除，并自动跳过其他作业仍引用的同名文件。[y/N]: "
+        "\n是否删除本次处理标签在企业微信同步目录中的源附件？"
+        "这会按 Excel 对应作业标签的全部附件记录删除，并自动跳过其他作业仍引用的同名文件。[y/N]: "
     ).strip().lower()
     cleanup_failed: list[str] = []
     if cleanup_confirm in {"y", "yes"}:

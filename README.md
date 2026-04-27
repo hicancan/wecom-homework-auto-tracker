@@ -30,9 +30,9 @@
 
 ## ✨ Key Features / 核心特性
 
-- **🛡️ 强制区间运行**：执行脚本必须填入 `--from` 和 `--to` 参数，从源头杜绝因全量执行而覆盖历史数据的误操作。
-- **📦 增量冻结策略**：区间外的历史统计数据永久保留，区间内如果有缺失的作业，随时支持回退恢复到历史数据。
-- **⚡ 超快的前端响应**：作业数据按次分片存储在单独的 JSON 中（`course.index` + `hwNNN`），前端按需懒加载，极速渲染。
+- **🛡️ 强制作业标签选择**：执行脚本必须显式选择一个或多个作业标签，不再依赖标签里的数字，也不会误把 `2026春季作业` 识别成“第 2026 次”。
+- **📦 按标签冻结历史**：未被本次选中的作业标签统计永久保留；本次选中的标签会整标签覆盖更新，避免误伤其他作业。
+- **⚡ 超快的前端响应**：作业数据按标签分片存储在单独的 JSON 中（`course.index` + `course.<作业token>.json`），前端按需懒加载，极速渲染。
 - **🔄 稳定实时更新**：前端拉取配置时强制设定 `no-store`，搭配数据文件版本参数 `?v=...`，确保学生永远看到**最准确**的数据，无需烦心浏览器缓存刺客。
 - **🧑‍🎓 “其他”学生通道**：除了常规名单，内置支持 `other_students.json`（可用于重修、补修学生），名单结构独立展示，互不干扰。
 - **🏷️ 可配置命名模板**：支持在 `local.config.json` 按课程配置附件重命名模板（例如 `学号-姓名-实验报告N`）。
@@ -59,7 +59,7 @@ flowchart LR
     subgraph Output Generation
         E["out/.../按学号重命名附件"]
         F["public/data/<课程>.index.json"]
-        G["public/data/<课程>.hwNNN.json"]
+        G["public/data/<课程>.<作业token>.json"]
         H["public/courses.json"]
         I["public/course-manifest.json"]
     end
@@ -150,7 +150,7 @@ Copy-Item .\config\config.template.json .\config\local.config.json
 
 ### 3️⃣ 运行数据提取 (推荐使用交互式脚本)
 
-我们提供了一个友好的交互式脚本，协助你轻松提取指定轮次的作业数据：
+我们提供了一个友好的交互式脚本，协助你轻松提取指定标签的作业数据：
 
 ```powershell
 .\scripts\run_extract_interactive.cmd
@@ -159,11 +159,11 @@ Copy-Item .\config\config.template.json .\config\local.config.json
 **交互式脚本将带你完成：**
 1. 自动列出所有支持的课程 Excel。
 2. 让你轻松勾选一个或多个课程（支持输入 `1,2` / `1，2` / `1-3` / `all`）。
-3. 循环让你输入需要处理的作业批次区间 (`--from` 和 `--to`)。
+3. 对每门课程列出 Excel 中检测到的原始作业标签，并让你按临时编号勾选（支持 `1,2` / `1-3` / `all`）。
 4. 在正式执行前展示参数总览，供你做最后确认。
-5. 每次作业目录会自动打包为 `out/<课程>/zip/<课程名>-<第N次>.zip`。
+5. 每次作业目录会自动打包为 `out/<课程>/zip/<课程名>-<作业标签>.zip`（数字标签仍会保持原来的 `第N次` 风格）。
 6. 全部成功后，**最后会询问你是否清理企业微信同步到本地的源附件**。
-7. 如果你选择清理，脚本会按 Excel 中本次作业范围的**全部附件记录**删除对应源文件，并自动跳过仍被其他作业引用的同名文件。
+7. 如果你选择清理，脚本会按 Excel 中本次作业标签的**全部附件记录**删除对应源文件，并自动跳过仍被其他作业引用的同名文件。
 8. 之后再自动执行 `git commit + git push`（仅提交 `webapp/public`）。
 
 如需只跑提取、不自动推送：
@@ -178,12 +178,12 @@ Copy-Item .\config\config.template.json .\config\local.config.json
 ```powershell
 python .\local\extract_homework.py `
   --excel ".\config\算法分析与设计B240401-03.xlsx" `
-  --from 1 `
-  --to 2
+  --label "第1次" `
+  --label "期中项目"
 ```
 
 **重要约束：**
-考虑到安全问题，`--from` 和 `--to` 是**必填项**，如果你未显式传入，脚本会抛出异常报错退出，防止直接执行全量提取操作导致线上数据覆盖错误。
+考虑到安全问题，`--label` 是**必填项**；你必须显式指定一个或多个当前 Excel 中存在的作业标签，脚本才会执行，防止直接全量覆盖。
 </details>
 
 ### 4️⃣ 本地预览 Web 看板
@@ -205,7 +205,7 @@ npm run build
 
 cd ..
 git add webapp/public webapp/src local scripts .github/workflows/pages.yml README.md
-git commit -m "feat(data): update homework stats for round 1-3"
+git commit -m "feat(data): update homework stats for selected labels"
 git push origin main
 ```
 `main` 分支发生变动后，代码仓库的 GitHub Actions 将自动接管流程，帮你部署静态资源到 GitHub Pages。
@@ -220,7 +220,7 @@ git push origin main
 1. `course-manifest.json` (记录最新资源的哈希版本)
 2. `courses.json` (课程总入口)
 3. `data/<course>.index.json` (指定课程的概览)
-4. `data/<course>.hwNNN.json` (该课程第 N 次作业的详情数据)
+4. `data/<course>.<作业token>.json` (该课程某个作业标签的详情数据)
 
 **带来的优势：**
 - 仅仅加载当前课程、当前作业涉及的数据，极大缩小首屏体积。
@@ -236,15 +236,15 @@ git push origin main
 
 ## 💡 Operational Best Practices / 运营最佳实践
 
-1. **分批小步快跑（推荐的回收方式）**
-   如果一天内收取多轮作业，**请不要每次跑全量提取**。我们更推荐：
-   - 第一轮：`--from 1 --to 1`
-   - 第二轮：`--from 1 --to 2`
-   - 第三轮：`--from 1 --to 3`
-   这样既保证了连续的增量，又避免污染未来未发布数据的轮次。
+1. **按标签小步更新（推荐方式）**
+   如果一天内收取多份不同作业，**请不要每次跑全量提取**。更推荐只选择你这次准备发布的那几个标签，例如：
+   - 第一轮：只选 `第1次`
+   - 第二轮：只选 `第2次`
+   - 第三轮：只选 `期中项目`
+   这样既保证了每次更新范围明确，也不会误伤其他未准备发布的标签数据。
 
 2. **微盘存储空间优化**
-   当企业微信微盘空间即将拉满时，**勇敢清理并删除历史的原始附件**。交互式脚本在提取成功后会提供一个“是否删除源附件”的确认步骤，并为每次作业生成 `out/<课程>/stats/<第N次>.source_attachment_cleanup.json` 清理报告。只要你的 Git 仓库和本地 `webapp/public/data/*.hwNNN.json` 文件妥善保管着已生成的 JSON，在线的看版依旧坚不可摧地能查询到历史的情况。
+   当企业微信微盘空间即将拉满时，**可以清理历史的原始附件**。交互式脚本在提取成功后会提供一个“是否删除源附件”的确认步骤，并为每次作业生成 `out/<课程>/stats/<作业token>.source_attachment_cleanup.json` 清理报告。只要你的 Git 仓库和本地 `webapp/public/data/*.json` 文件妥善保管着已生成的统计数据，在线看板仍然可以正常查询历史结果。
 
 3. **班级跨度大的范围锁定 (Class scope locking)**
    如果在 `courses.json` 中配置了 `course_classes.<课程名>.lock = true`，这门课统计的班级范围将被固定，不会再被新拉取的 Excel 数据自动探测和调整范围。这在处理包含学长/补修混杂的跨学期班级时，数据表现会非常稳定。
@@ -264,8 +264,8 @@ git push origin main
 
 - **Q: 提示我课程选择输入报错？**
   A: 输入的格式须遵循如下规范：英文逗号、中文逗号分隔 `1,2` `1，2`，区间 `1-3` 或者是直接敲入 `all`。
-- **Q: 它骂我：“缺少 `--from` 和 `--to` 参数！”**
-  A: 别慌，这是我们精心设计的全量覆盖保护机制。请补齐具体的开始与截止次数即可正常执行。
+- **Q: 它骂我：“至少需要指定一个作业标签” 或 “标签未出现在当前 Excel 中”！**
+  A: 这是刻意的保护机制。现在程序只按 Excel 中真实存在的原始作业标签运行；请在交互菜单里重新选择，或在命令行里补上正确的 `--label` 参数。
 - **Q: 学生明确表示交了，为何我的附件还是没统计进去？**
   A: 先检查企业微信微盘客户端是否已经把“收集的文件”同步到本地；其次确认该附件后缀是否在 `allowed_submission_extensions` 白名单里。比如默认只认 `doc/docx/pdf`，如果学生传的是图片，系统会记为“无效附件”，不会计入提交率。
 - **Q: 推上去后，网页仍然显示老数据？**

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -37,7 +38,7 @@ def _cleanup_legacy_hashed_files(public_root: Path) -> None:
         name = old_data.name
         if ".hw" in name or name.endswith(".index.json"):
             continue
-        if name.count(".") >= 2:
+        if re.search(r"\.[0-9a-f]{12}\.json$", name):
             old_data.unlink()
 
 
