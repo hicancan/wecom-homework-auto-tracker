@@ -192,7 +192,7 @@ export function CollectionPage() {
               <h1 className="mt-4 text-3xl font-bold md:text-5xl">{selectedCollection?.主题 || collectionIndex?.主题 || '收集表'}</h1>
               <p className="mt-3 text-sm text-slate-500">网页最后部署时间： {deployTime}</p>
             </div>
-            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-start">
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
               <button
                 type="button"
                 onClick={handleShareLink}
