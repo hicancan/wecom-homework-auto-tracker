@@ -36,14 +36,14 @@ def active_entries_for_submission(
 
 
 def create_submission_zip(
-    course_out_dir: Path,
+    collection_out_dir: Path,
     submission_label: str,
     manifest: dict[str, Any],
     cutoff: pd.Timestamp | None = None,
     makeup_window_start: pd.Timestamp | None = None,
     makeup_window_end: pd.Timestamp | None = None,
 ) -> Path:
-    zip_dir = course_out_dir / "zip"
+    zip_dir = collection_out_dir / "zip"
     zip_dir.mkdir(parents=True, exist_ok=True)
     zip_path = zip_dir / f"{sanitize_filename_component(submission_label)}.zip"
     if zip_path.exists():
@@ -53,7 +53,7 @@ def create_submission_zip(
             rel = str(entry.get("文件相对路径", "")).strip()
             if not rel:
                 continue
-            source = course_out_dir / rel
+            source = collection_out_dir / rel
             if not source.exists():
                 continue
             arcname = "/".join(
@@ -68,11 +68,11 @@ def create_submission_zip(
 
 
 def write_submission_reports(
-    course_out_dir: Path,
+    collection_out_dir: Path,
     submission_label: str,
     stat: dict[str, Any],
 ) -> None:
-    stats_dir = course_out_dir / "stats"
+    stats_dir = collection_out_dir / "stats"
     stats_dir.mkdir(parents=True, exist_ok=True)
     token = sanitize_filename_component(submission_label)
     (stats_dir / f"{token}.json").write_text(dump_json(stat), encoding="utf-8")

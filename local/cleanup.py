@@ -16,7 +16,7 @@ def execute_source_attachment_cleanup(
     attachments_dir: Path,
     attachment_lookup: dict[str, str],
     duplicate_lookup: dict[str, list[str]],
-    course_out_dir: Path,
+    collection_out_dir: Path,
     mode: str,
 ) -> Path:
     if mode not in {"dry-run", "apply"}:
@@ -87,7 +87,7 @@ def execute_source_attachment_cleanup(
         "本地缺失附件": missing,
         "删除失败附件": failures,
     }
-    report_path = course_out_dir / "stats" / "source_attachment_cleanup.json"
+    report_path = collection_out_dir / "stats" / "source_attachment_cleanup.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(dump_json(report), encoding="utf-8")
     return report_path

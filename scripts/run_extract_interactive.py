@@ -35,6 +35,13 @@ class PlanItem:
     makeup_window_end: str
 
 
+@dataclass(frozen=True)
+class PublishConfig:
+    publish_mode: str
+    makeup_window_start: str
+    makeup_window_end: str
+
+
 def normalize_text(value: object) -> str:
     return " ".join(str(value or "").strip().split())
 
@@ -198,13 +205,19 @@ def default_makeup_window_end() -> str:
     return datetime.now().strftime("%Y-%m-%d") + " 22:40:00"
 
 
-def choose_publish_mode() -> tuple[str, str, str]:
-    print("\n发布模式:")
+def describe_publish_config(config: PublishConfig) -> str:
+    if config.publish_mode == "cutoff":
+        return "cutoff"
+    return f"makeup-window {config.makeup_window_start or 'cutoff'} -> {config.makeup_window_end}"
+
+
+def choose_publish_config(label_hint: str = "") -> PublishConfig:
+    print(f"\n发布模式{label_hint}:")
     print("  cutoff=截止模式，只发布截止时间内有效提交，ZIP 不含补交")
     print("  makeup-window=补交窗口模式，发布截止内 + 补交窗口内有效提交，ZIP 含补交")
     raw = input("是否开启补交窗口？[y/N]: ").strip().lower()
     if raw not in {"y", "yes"}:
-        return "cutoff", "", ""
+        return PublishConfig("cutoff", "", "")
 
     start = input("补交窗口开始时间（默认：各提交序号统计截止时间之后）: ").strip()
     default_end = default_makeup_window_end()
@@ -212,7 +225,53 @@ def choose_publish_mode() -> tuple[str, str, str]:
     pd.to_datetime(end, errors="raise")
     if start:
         pd.to_datetime(start, errors="raise")
-    return "makeup-window", start, end
+    return PublishConfig("makeup-window", start, end)
+
+
+def choose_label_publish_configs(labels: list[str]) -> dict[str, PublishConfig]:
+    default_config = choose_publish_config("（批量默认）")
+    configs = {label: default_config for label in labels}
+    print("\n逐项覆盖:")
+    print(f"  默认发布模式: {describe_publish_config(default_config)}")
+    raw = input("是否为某个提交序号单独覆盖发布模式？[y/N]: ").strip().lower()
+    if raw not in {"y", "yes"}:
+        return configs
+    for label in labels:
+        current = describe_publish_config(configs[label])
+        raw_label = input(f"{label} 使用默认发布模式 `{current}`？[Y/n]: ").strip().lower()
+        if raw_label in {"n", "no"}:
+            configs[label] = choose_publish_config(f"（{label}）")
+    return configs
+
+
+def grouped_plan_items(
+    *,
+    item: CollectionConfig,
+    selected_labels: list[str],
+    cutoff_policy: str,
+    manual_cutoffs: dict[str, str],
+    publish_configs: dict[str, PublishConfig],
+) -> list[PlanItem]:
+    grouped: dict[tuple[str, str, str], list[str]] = {}
+    for label in selected_labels:
+        config = publish_configs[label]
+        grouped.setdefault((config.publish_mode, config.makeup_window_start, config.makeup_window_end), []).append(label)
+
+    items: list[PlanItem] = []
+    for (publish_mode, makeup_window_start, makeup_window_end), labels in grouped.items():
+        items.append(
+            PlanItem(
+                collection_id=item.collection_id,
+                title=item.title,
+                labels=labels,
+                cutoff_policy=cutoff_policy,
+                manual_cutoffs={label: manual_cutoffs[label] for label in labels if label in manual_cutoffs},
+                publish_mode=publish_mode,
+                makeup_window_start=makeup_window_start,
+                makeup_window_end=makeup_window_end,
+            )
+        )
+    return items
 
 
 def choose_items(repo_root: Path, collections: list[CollectionConfig]) -> list[PlanItem]:
@@ -251,17 +310,14 @@ def choose_items(repo_root: Path, collections: list[CollectionConfig]) -> list[P
             labels_df=labels_df,
             published_cutoffs=load_published_cutoffs(repo_root, item.collection_id),
         )
-        publish_mode, makeup_window_start, makeup_window_end = choose_publish_mode()
-        plan.append(
-            PlanItem(
-                collection_id=item.collection_id,
-                title=item.title,
-                labels=selected_labels,
+        publish_configs = choose_label_publish_configs(selected_labels)
+        plan.extend(
+            grouped_plan_items(
+                item=item,
+                selected_labels=selected_labels,
                 cutoff_policy=cutoff_policy,
                 manual_cutoffs=manual_cutoffs,
-                publish_mode=publish_mode,
-                makeup_window_start=makeup_window_start,
-                makeup_window_end=makeup_window_end,
+                publish_configs=publish_configs,
             )
         )
     return plan

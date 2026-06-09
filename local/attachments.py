@@ -5,7 +5,7 @@ from pathlib import Path
 from contract import normalize_filename_key
 
 
-def find_attachments_dir(course_name: str, attachments_root: Path, attachments_override: str) -> Path:
+def find_attachments_dir(collection_title: str, attachments_root: Path, attachments_override: str) -> Path:
     if attachments_override.strip():
         path = Path(attachments_override).expanduser().resolve()
         if not path.exists():
@@ -16,18 +16,18 @@ def find_attachments_dir(course_name: str, attachments_root: Path, attachments_o
     candidates = [
         path
         for path in attachments_root.iterdir()
-        if path.is_dir() and (course_name in path.name or path.name.startswith(course_name))
+        if path.is_dir() and (collection_title in path.name or path.name.startswith(collection_title))
     ]
     preferred = [path for path in candidates if "收集的文件" in path.name]
     if len(preferred) == 1:
         return preferred[0].resolve()
     if len(preferred) > 1:
-        raise ValueError("匹配到多个课程附件目录:\n" + "\n".join(str(path) for path in preferred))
+        raise ValueError("匹配到多个收集表附件目录:\n" + "\n".join(str(path) for path in preferred))
     if len(candidates) == 1:
         return candidates[0].resolve()
     if len(candidates) > 1:
-        raise ValueError("匹配到多个课程目录:\n" + "\n".join(str(path) for path in candidates))
-    raise FileNotFoundError(f"未找到课程附件目录: {course_name}")
+        raise ValueError("匹配到多个收集表目录:\n" + "\n".join(str(path) for path in candidates))
+    raise FileNotFoundError(f"未找到收集表附件目录: {collection_title}")
 
 
 def build_attachment_lookup(attachments_dir: Path) -> tuple[dict[str, str], dict[str, list[str]]]:

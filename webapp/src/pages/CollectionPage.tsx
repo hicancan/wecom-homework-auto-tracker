@@ -259,13 +259,24 @@ export function CollectionPage() {
               </div>
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                 <StatusLegend allowMakeup={allowMakeup} />
-                <div className="text-sm text-slate-500">
-                  <p>统计截止时间：{submissionData?.统计截止时间 || '加载中...'}</p>
-                  <p className={allowMakeup ? 'text-sky-700' : 'text-slate-600'}>
-                    {allowMakeup
-                      ? `允许补交：${submissionData?.补交窗口开始时间 || submissionData?.统计截止时间 || '-'} 之后至 ${submissionData?.补交窗口结束时间 || '-'}`
-                      : '不允许补交'}
-                  </p>
+                <div className="flex flex-wrap items-center justify-start gap-2 text-sm md:justify-end">
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 font-semibold text-slate-700">
+                    统计截止 {submissionData?.统计截止时间 || '加载中...'}
+                  </span>
+                  <span
+                    className={`rounded-full border px-3 py-1 font-semibold ${
+                      allowMakeup
+                        ? 'border-sky-200 bg-sky-50 text-sky-800'
+                        : 'border-slate-200 bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    {allowMakeup ? '补交窗口' : '不允许补交'}
+                  </span>
+                  {allowMakeup && (
+                    <span className="rounded-full border border-sky-200 bg-white px-3 py-1 font-semibold text-sky-800">
+                      {(submissionData?.补交窗口开始时间 || submissionData?.统计截止时间 || '-')} 至 {submissionData?.补交窗口结束时间 || '-'}
+                    </span>
+                  )}
                 </div>
               </div>
             </section>

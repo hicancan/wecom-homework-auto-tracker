@@ -38,7 +38,7 @@ Copy-Item .\config\config.template.json .\config\config.json
 
 ```json
 {
-  "courses_dir": "config",
+  "collections_dir": "config",
   "attachments_root": "C:/Users/yourname/Documents/WXWork/your-id/WeDrive/your-org/我的文件",
   "students": "config/students.json",
   "other_students": "config/other_students.json",

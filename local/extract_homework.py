@@ -63,8 +63,11 @@ def meta_for_excel(excel_path: Path, registry: dict[str, dict[str, Any]]) -> dic
 
 
 def configured_excels(repo_root: Path, cfg: dict[str, Any], registry: dict[str, dict[str, Any]]) -> dict[str, Path]:
-    courses_dir = resolve_path(cfg.get("courses_dir", "config"), repo_root)
-    discovered = discover_collection_excels(courses_dir)
+    collections_dir_text = str(cfg.get("collections_dir", "")).strip()
+    if not collections_dir_text:
+        raise ValueError("配置缺少 collections_dir；请显式指定收集表 Excel 所在目录。")
+    collections_dir = resolve_path(collections_dir_text, repo_root)
+    discovered = discover_collection_excels(collections_dir)
     result: dict[str, Path] = {}
     for collection_id, item in registry.items():
         excel_text = str(item.get("excel", "")).strip()
@@ -74,7 +77,7 @@ def configured_excels(repo_root: Path, cfg: dict[str, Any], registry: dict[str, 
         if not excel_path.exists():
             raise FileNotFoundError(f"收集表 Excel 不存在: {collection_id} -> {excel_path}")
         if excel_path.stem not in discovered:
-            raise ValueError(f"Excel 标题不符合新模型或不在 courses_dir 中: {excel_path.name}")
+            raise ValueError(f"Excel 标题不符合新模型或不在 collections_dir 中: {excel_path.name}")
         result[collection_id] = excel_path
     return result
 
@@ -138,7 +141,7 @@ def _extract_student_id_from_filename(filename: str) -> str:
 
 def _count_archive_status(manifest: dict[str, Any]) -> dict[str, int]:
     active = 0
-    missing = 0
+    source_unavailable = 0
     invalid = 0
     for entry in manifest.get("entries", {}).values():
         if not isinstance(entry, dict):
@@ -151,10 +154,10 @@ def _count_archive_status(manifest: dict[str, Any]) -> dict[str, int]:
         if status == "active":
             active += 1
         elif status == "missing":
-            missing += 1
+            source_unavailable += 1
         elif status == "invalid":
             invalid += 1
-    return {"active": active, "missing": missing, "invalid": invalid}
+    return {"active": active, "source_unavailable": source_unavailable, "invalid": invalid}
 
 
 def check_unknown_students(
@@ -163,7 +166,6 @@ def check_unknown_students(
     other_students_by_name: dict[str, dict[str, str]],
 ) -> list[dict[str, Any]]:
     all_names = set(students_by_name) | set(other_students_by_name)
-    df_known = df[df["_name_norm"].isin(all_names)]
     unknown_names = sorted(set(df["_name_norm"].unique()) - all_names)
     if not unknown_names:
         return []
@@ -293,7 +295,7 @@ def process_collection(
             attachments_dir=attachments_dir,
             attachment_lookup=attachment_lookup,
             duplicate_lookup=duplicate_lookup,
-            course_out_dir=collection_out_dir,
+            collection_out_dir=collection_out_dir,
             mode=cleanup_mode,
         )
         return {"收集表ID": collection_id, "标题": meta["标题"], "清理报告": str(report_path)}
@@ -303,7 +305,7 @@ def process_collection(
         columns=columns,
         meta=meta,
         selected_labels=selected_labels,
-        course_out_dir=collection_out_dir,
+        collection_out_dir=collection_out_dir,
         attachments_dir=attachments_dir,
         attachment_lookup=attachment_lookup,
         duplicate_lookup=duplicate_lookup,
@@ -348,7 +350,12 @@ def process_collection(
         )
 
     archive_counts = _count_archive_status(manifest)
-    print(f"\n  归档状态: active={archive_counts['active']} missing={archive_counts['missing']} invalid={archive_counts['invalid']}")
+    print(
+        "\n  归档状态: "
+        f"active={archive_counts['active']} "
+        f"source_unavailable={archive_counts['source_unavailable']} "
+        f"invalid={archive_counts['invalid']}"
+    )
 
     summary = {
         "收集表ID": collection_id,
@@ -374,7 +381,7 @@ def process_collection(
                 attachments_dir=attachments_dir,
                 attachment_lookup=attachment_lookup,
                 duplicate_lookup=duplicate_lookup,
-                course_out_dir=collection_out_dir,
+                collection_out_dir=collection_out_dir,
                 mode=cleanup_mode,
             )
         )
@@ -429,7 +436,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--makeup-window-start", default="", help="补交窗口开始时间；默认等于各提交序号统计截止时间")
     parser.add_argument("--makeup-window-end", default="", help="补交窗口结束时间，格式 YYYY-MM-DD HH:MM:SS")
-    parser.add_argument("--no-late", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--list-collections", action="store_true")
     parser.add_argument("--list-submission-labels", action="store_true")
     return parser.parse_args()
@@ -443,7 +449,6 @@ def main() -> None:
         fallback = repo_root / "config" / "local.config.json"
         config_path = fallback if fallback.exists() else config_path
     cfg = load_local_config(config_path)
-    publish_mode = "cutoff" if args.no_late else args.publish_mode
     collection_id, excel_path, configured_meta = pick_excel(args, repo_root, cfg)
     df, _, _ = load_collection_excel(excel_path)
     labels = sorted(dict.fromkeys(df["_submission_label"].tolist()), key=sort_submission_key)
@@ -467,7 +472,7 @@ def main() -> None:
         cleanup_mode=args.cleanup_source_attachments,
         cleanup_only=args.cleanup_only,
         skip_unknown=args.skip_unknown,
-        publish_mode=publish_mode,
+        publish_mode=args.publish_mode,
         makeup_window_start=parse_cli_datetime(args.makeup_window_start, "--makeup-window-start"),
         makeup_window_end=parse_cli_datetime(args.makeup_window_end, "--makeup-window-end"),
         configured_meta=configured_meta,

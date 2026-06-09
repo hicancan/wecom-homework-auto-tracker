@@ -4,7 +4,6 @@ import hashlib
 import json
 import re
 import shutil
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -58,9 +57,9 @@ def archive_version_token(version: dict[str, Any]) -> str:
     return f"{timestamp}-{str(version.get('id', archive_version_id(version)))[:12]}"
 
 
-def immutable_version_path(course_out_dir: Path, entry_id: str, version: dict[str, Any], filename: str) -> Path:
+def immutable_version_path(collection_out_dir: Path, entry_id: str, version: dict[str, Any], filename: str) -> Path:
     return (
-        course_out_dir
+        collection_out_dir
         / "files"
         / "_versions"
         / archive_entry_token(entry_id)
@@ -152,29 +151,29 @@ def append_archive_version(entry: dict[str, Any], version: dict[str, Any]) -> No
     update_entry_latest_fields(entry, versions[-1])
 
 
-def active_version_file_exists(course_out_dir: Path, version: dict[str, Any]) -> bool:
+def active_version_file_exists(collection_out_dir: Path, version: dict[str, Any]) -> bool:
     if version.get("状态") != "active":
         return False
     rel = str(version.get("文件相对路径", "")).strip()
-    return bool(rel) and (course_out_dir / rel).is_file()
+    return bool(rel) and (collection_out_dir / rel).is_file()
 
 
-def has_active_archived_file(entry: dict[str, Any], course_out_dir: Path) -> bool:
-    return any(active_version_file_exists(course_out_dir, version) for version in entry.get("versions", []))
+def has_active_archived_file(entry: dict[str, Any], collection_out_dir: Path) -> bool:
+    return any(active_version_file_exists(collection_out_dir, version) for version in entry.get("versions", []))
 
 
 def ensure_version_file(
-    course_out_dir: Path,
+    collection_out_dir: Path,
     entry_id: str,
     version: dict[str, Any],
     source_path: Path,
     output_filename: str,
 ) -> None:
-    target = immutable_version_path(course_out_dir, entry_id, version, output_filename)
+    target = immutable_version_path(collection_out_dir, entry_id, version, output_filename)
     target.parent.mkdir(parents=True, exist_ok=True)
     if not target.exists():
         shutil.copy2(source_path, target)
-    version["文件相对路径"] = str(target.relative_to(course_out_dir)).replace("\\", "/")
+    version["文件相对路径"] = str(target.relative_to(collection_out_dir)).replace("\\", "/")
     version["文件大小"] = target.stat().st_size
     version["sha256"] = hash_file(target)
 
@@ -211,14 +210,14 @@ def archive_entry_id(student_no: str, submission_label: str, content_label: str)
 
 
 def active_archive_path(
-    course_out_dir: Path,
+    collection_out_dir: Path,
     submission_label: str,
     content_name: str,
     class_name: str,
     filename: str,
 ) -> Path:
     return (
-        course_out_dir
+        collection_out_dir
         / "files"
         / "current"
         / sanitize_filename_component(submission_label)
@@ -228,37 +227,9 @@ def active_archive_path(
     )
 
 
-def history_archive_path(course_out_dir: Path, entry: dict[str, Any]) -> Path:
-    timestamp = re.sub(r"[^0-9]", "", str(entry.get("提交时间", ""))) or datetime.now().strftime("%Y%m%d%H%M%S")
-    filename = Path(str(entry.get("文件相对路径", "old-file"))).name
-    return (
-        course_out_dir
-        / "history"
-        / sanitize_filename_component(str(entry.get("提交序号", "未知提交")))
-        / sanitize_filename_component(str(entry.get("提交内容名", "未知内容")))
-        / sanitize_filename_component(str(entry.get("学号", "未知学生")))
-        / f"{timestamp}-{filename}"
-    )
-
-
-def retire_existing_active_file(course_out_dir: Path, entry: dict[str, Any]) -> None:
-    rel = str(entry.get("文件相对路径", "")).strip()
-    if not rel:
-        return
-    old_path = (course_out_dir / rel).resolve()
-    if not old_path.exists() or not old_path.is_file():
-        return
-    history_path = history_archive_path(course_out_dir, entry)
-    history_path.parent.mkdir(parents=True, exist_ok=True)
-    if history_path.exists():
-        history_path = history_path.with_name(f"{history_path.stem}-{hash_file(old_path)[:8]}{history_path.suffix}")
-    shutil.move(str(old_path), str(history_path))
-    entry.setdefault("历史文件", []).append(str(history_path.relative_to(course_out_dir)).replace("\\", "/"))
-
-
 def upsert_active_file(
     manifest: dict[str, Any],
-    course_out_dir: Path,
+    collection_out_dir: Path,
     entry_id: str,
     source_path: Path,
     destination_path: Path,
@@ -267,9 +238,9 @@ def upsert_active_file(
     existing = manifest["entries"].get(entry_id)
     entry = existing if isinstance(existing, dict) else base_entry_from_data(entry_id, entry_data, manifest)
     version = version_from_data({**entry_data, "状态": "active"}, source="excel_sync")
-    ensure_version_file(course_out_dir, entry_id, version, source_path, destination_path.name)
+    ensure_version_file(collection_out_dir, entry_id, version, source_path, destination_path.name)
     destination_path.parent.mkdir(parents=True, exist_ok=True)
-    version_source = course_out_dir / str(version["文件相对路径"])
+    version_source = collection_out_dir / str(version["文件相对路径"])
     if not destination_path.exists() or hash_file(destination_path) != version["sha256"]:
         shutil.copy2(version_source, destination_path)
     append_archive_version(entry, version)
@@ -278,7 +249,7 @@ def upsert_active_file(
 
 def set_non_active_status(
     manifest: dict[str, Any],
-    course_out_dir: Path,
+    collection_out_dir: Path,
     entry_id: str,
     entry_data: dict[str, Any],
     status: str,
@@ -313,14 +284,14 @@ def merge_incremental_archive(
     columns: dict[str, str],
     meta: dict[str, str],
     selected_labels: list[str],
-    course_out_dir: Path,
+    collection_out_dir: Path,
     attachments_dir: Path,
     attachment_lookup: dict[str, str],
     duplicate_lookup: dict[str, list[str]],
     students_by_name: dict[str, dict[str, str]],
     other_students_by_name: dict[str, dict[str, str]],
 ) -> dict[str, Any]:
-    archive_path = course_out_dir / "archive_manifest.json"
+    archive_path = collection_out_dir / "archive_manifest.json"
     manifest = load_archive_manifest(archive_path, meta)
     selected_set = set(selected_labels)
     selected_df = df[df["_submission_label"].isin(selected_set)].copy()
@@ -357,12 +328,12 @@ def merge_incremental_archive(
         }
 
         if not uploaded_name:
-            set_non_active_status(manifest, course_out_dir, entry_id, base_entry, "missing", "上传字段为空")
+            set_non_active_status(manifest, collection_out_dir, entry_id, base_entry, "missing", "上传字段为空")
             continue
         if uploaded_ext not in content["允许后缀"]:
             set_non_active_status(
                 manifest,
-                course_out_dir,
+                collection_out_dir,
                 entry_id,
                 base_entry,
                 "invalid",
@@ -373,37 +344,37 @@ def merge_incremental_archive(
         file_key = normalize_filename_key(uploaded_name)
         if file_key in duplicate_lookup:
             base_entry["本地候选附件名"] = duplicate_lookup[file_key]
-            set_non_active_status(manifest, course_out_dir, entry_id, base_entry, "missing", "本地附件名存在歧义")
+            set_non_active_status(manifest, collection_out_dir, entry_id, base_entry, "missing", "本地附件名存在歧义")
             continue
 
         source_filename = attachment_lookup.get(file_key, "")
         existing = manifest["entries"].get(entry_id)
         if not source_filename:
-            if isinstance(existing, dict) and has_active_archived_file(existing, course_out_dir):
+            if isinstance(existing, dict) and has_active_archived_file(existing, collection_out_dir):
                 for version in existing.get("versions", []):
-                    if active_version_file_exists(course_out_dir, version):
+                    if active_version_file_exists(collection_out_dir, version):
                         version["同步源已删除但保留归档"] = True
                 manifest["entries"][entry_id] = existing
             else:
-                set_non_active_status(manifest, course_out_dir, entry_id, base_entry, "missing", "本地同步目录未找到附件")
+                set_non_active_status(manifest, collection_out_dir, entry_id, base_entry, "missing", "本地同步目录未找到附件")
             continue
 
         source_path = attachments_dir / source_filename
         if not source_path.exists():
-            if isinstance(existing, dict) and has_active_archived_file(existing, course_out_dir):
+            if isinstance(existing, dict) and has_active_archived_file(existing, collection_out_dir):
                 for version in existing.get("versions", []):
-                    if active_version_file_exists(course_out_dir, version):
+                    if active_version_file_exists(collection_out_dir, version):
                         version["同步源已删除但保留归档"] = True
                 manifest["entries"][entry_id] = existing
             else:
-                set_non_active_status(manifest, course_out_dir, entry_id, base_entry, "missing", "源附件路径不存在")
+                set_non_active_status(manifest, collection_out_dir, entry_id, base_entry, "missing", "源附件路径不存在")
             continue
 
         ext = normalize_extension(source_path.suffix)
         if ext not in content["允许后缀"]:
             set_non_active_status(
                 manifest,
-                course_out_dir,
+                collection_out_dir,
                 entry_id,
                 base_entry,
                 "invalid",
@@ -412,13 +383,13 @@ def merge_incremental_archive(
             continue
 
         destination = active_archive_path(
-            course_out_dir,
+            collection_out_dir,
             submission_label,
             content["提交内容名"],
             student["班级"],
             build_output_filename(student, ext),
         )
-        upsert_active_file(manifest, course_out_dir, entry_id, source_path, destination, base_entry)
+        upsert_active_file(manifest, collection_out_dir, entry_id, source_path, destination, base_entry)
 
     manifest["updated_at"] = now_text()
     archive_path.parent.mkdir(parents=True, exist_ok=True)
@@ -444,8 +415,6 @@ def active_entry_for(
     if not versions:
         return None
     return merged_entry_version(entry, sorted(versions, key=version_sort_key)[-1])
-
-
 def accepted_entry_for(
     manifest: dict[str, Any],
     student_no: str,
@@ -464,30 +433,6 @@ def accepted_entry_for(
         if isinstance(version, dict)
         and entry_time_in_publication_window(version, cutoff, makeup_window_start, makeup_window_end)
     ]
-    if not versions:
-        return None
-    return merged_entry_version(entry, sorted(versions, key=version_sort_key)[-1])
-
-
-def latest_version_after_cutoff(
-    manifest: dict[str, Any],
-    student_no: str,
-    submission_label: str,
-    content_label: str,
-    cutoff: pd.Timestamp | None,
-) -> dict[str, Any] | None:
-    if cutoff is None:
-        return None
-    entry = manifest.get("entries", {}).get(archive_entry_id(student_no, submission_label, content_label))
-    if not isinstance(entry, dict):
-        return None
-    versions = []
-    for version in entry.get("versions", []):
-        if not isinstance(version, dict):
-            continue
-        ts = parse_datetime_text(version.get("提交时间"))
-        if ts is not None and ts > cutoff:
-            versions.append(version)
     if not versions:
         return None
     return merged_entry_version(entry, sorted(versions, key=version_sort_key)[-1])

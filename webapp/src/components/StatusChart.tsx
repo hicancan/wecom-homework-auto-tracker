@@ -14,7 +14,7 @@ function segmentGradient(segments: StatusSegments): string {
   add(segments.submitted, '#10b981')
   add(segments.late, '#0ea5e9')
   add(segments.invalid, '#f59e0b')
-  add(segments.missing, '#f43f5e')
+  add(segments.unmet, '#f43f5e')
   return `conic-gradient(${parts.join(', ') || '#e2e8f0 0% 100%'})`
 }
 
@@ -42,7 +42,7 @@ export function StatusProgressBar({ segments }: { segments: StatusSegments }) {
       <div className="bg-emerald-500" style={{ width: width(segments.submitted) }} />
       <div className="bg-sky-500" style={{ width: width(segments.late) }} />
       <div className="bg-amber-500" style={{ width: width(segments.invalid) }} />
-      <div className="bg-rose-500" style={{ width: width(segments.missing) }} />
+      <div className="bg-rose-500" style={{ width: width(segments.unmet) }} />
     </div>
   )
 }

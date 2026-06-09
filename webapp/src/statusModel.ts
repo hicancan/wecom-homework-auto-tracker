@@ -3,7 +3,7 @@ export type StatusSegments = {
   submitted: number
   late: number
   invalid: number
-  missing: number
+  unmet: number
 }
 
 export function clampRate(rate: number): number {
@@ -19,12 +19,12 @@ export function buildStatusSegments(expected: number, submitted: number, late: n
   const safeSubmitted = Math.max(0, submitted)
   const safeInvalid = Math.max(0, invalid)
   const cutoffSubmitted = Math.max(0, safeSubmitted - safeLate)
-  const missing = Math.max(0, safeExpected - cutoffSubmitted - safeLate - safeInvalid)
+  const unmet = Math.max(0, safeExpected - cutoffSubmitted - safeLate - safeInvalid)
   return {
     total: safeExpected,
     submitted: cutoffSubmitted,
     late: safeLate,
     invalid: safeInvalid,
-    missing,
+    unmet,
   }
 }

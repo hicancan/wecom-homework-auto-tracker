@@ -17,7 +17,7 @@ const tones = {
   submitted: { label: '已提交', className: 'border-emerald-200 bg-emerald-50 text-emerald-800' },
   late: { label: '补交', className: 'border-sky-200 bg-sky-50 text-sky-800' },
   invalid: { label: '后缀格式无效', className: 'border-amber-200 bg-amber-50 text-amber-800' },
-  missing: { label: '未提交', className: 'border-rose-200 bg-rose-50 text-rose-800' },
+  unmet: { label: '未达标', className: 'border-rose-200 bg-rose-50 text-rose-800' },
 } satisfies Record<string, Tone>
 
 function addRecords(records: StudentRecord[], values: string[] | undefined, tone: Tone, seen: Set<string>) {
@@ -35,7 +35,7 @@ function buildClassRecords(stat: ClassStat, allowMakeup: boolean): StudentRecord
   addRecords(records, stat.截止已交名单 || stat.已交名单, tones.submitted, seen)
   if (allowMakeup) addRecords(records, stat.已补交名单, tones.late, seen)
   addRecords(records, stat.后缀格式无效名单, tones.invalid, seen)
-  addRecords(records, stat.未交名单, tones.missing, seen)
+  addRecords(records, stat.未交名单, tones.unmet, seen)
   return records.sort((a, b) => a.studentNo.localeCompare(b.studentNo))
 }
 

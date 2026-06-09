@@ -1,7 +1,7 @@
 const items = [
   ['已提交', 'bg-emerald-500'],
   ['后缀格式无效', 'bg-amber-500'],
-  ['未提交', 'bg-rose-500'],
+  ['未达标', 'bg-rose-500'],
 ] as const
 
 const makeupItem = ['补交', 'bg-sky-500'] as const
