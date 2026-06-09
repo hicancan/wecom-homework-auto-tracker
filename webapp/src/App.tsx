@@ -10,19 +10,20 @@ import {
 
 type ClassStat = {
   应交人数: number
+  截止已交人数?: number
+  截止未达标人数?: number
+  截止提交率?: number
+  截止已交名单?: string[]
+  截止未达标名单?: string[]
   已交人数: number
   未交人数: number
   提交率: number
   已交名单: string[]
   未交名单: string[]
-  已交但附件缺失人数?: number
-  无效附件人数?: number
+  后缀格式无效人数?: number
+  后缀格式无效名单?: string[]
   已补交人数?: number
   已补交名单?: string[]
-  补交附件缺失人数?: number
-  补交附件缺失名单?: string[]
-  补交无效人数?: number
-  补交无效名单?: string[]
 }
 
 type ContentStatPayload = {
@@ -34,8 +35,7 @@ type ContentStatSummary = {
   应交人数: number
   已交人数: number
   未交人数: number
-  附件缺失人数: number
-  无效附件人数: number
+  后缀格式无效人数: number
   已补交人数: number
   提交率: number
 }
@@ -59,24 +59,24 @@ type SubmissionStat = {
   最后部署时间?: string
   最后提交时间?: string
   统计截止时间?: string
-  附件缺失?: IssueSummary
-  无效附件?: IssueSummary
+  后缀格式无效?: IssueSummary
   其他已交名单?: string[]
+  其他后缀格式无效名单?: string[]
+  其他已补交名单?: string[]
   汇总?: {
     应交总人数: number
+    截止已交总人数?: number
+    已补交总人数?: number
     已交总人数: number
     未交总人数: number
     总提交率: number
-    已交但附件缺失总人数?: number
-    无效附件总人数?: number
+    后缀格式无效总人数?: number
   }
   班级统计: Record<string, ClassStat>
   补交状态?: Record<
     string,
     {
       已补交名单?: string[]
-      补交无效名单?: string[]
-      补交附件缺失名单?: string[]
     }
   >
 }
@@ -122,20 +122,18 @@ function summarizeContentStats(value: SubmissionStat['提交内容统计']): Con
         acc.expected += stat.应交人数 || 0
         acc.submitted += stat.已交人数 || 0
         acc.missing += stat.未交人数 || 0
-        acc.attachmentMissing += stat.已交但附件缺失人数 || 0
-        acc.invalid += stat.无效附件人数 || 0
+        acc.invalid += stat.后缀格式无效人数 || 0
         acc.late += stat.已补交人数 || 0
         return acc
       },
-      { expected: 0, submitted: 0, missing: 0, attachmentMissing: 0, invalid: 0, late: 0 },
+      { expected: 0, submitted: 0, missing: 0, invalid: 0, late: 0 },
     )
     return {
       提交内容: content,
       应交人数: totals.expected,
       已交人数: totals.submitted,
       未交人数: totals.missing,
-      附件缺失人数: totals.attachmentMissing,
-      无效附件人数: totals.invalid,
+      后缀格式无效人数: totals.invalid,
       已补交人数: totals.late,
       提交率: totals.expected ? totals.submitted / totals.expected : 0,
     }
@@ -154,25 +152,103 @@ function buildCoursePath(courseName: string): string {
   return `/course/${encodeURIComponent(courseName)}`
 }
 
-function studentListIncludes(list: string[] | undefined, studentNo: string): boolean {
-  return (list || []).some((item) => extractStudentNo(item) === studentNo)
+type OtherSubmissionRecord = {
+  studentNo: string
+  label: string
+  className: string
 }
 
-function missingStudentTone(classStat: ClassStat, studentNo: string): { className: string; label: string } {
-  if (studentListIncludes(classStat.已补交名单, studentNo)) {
-    return { className: 'border-sky-200 bg-sky-50 text-sky-800', label: '已补交' }
+type AttentionRecord = {
+  studentNo: string
+  label: string
+  className: string
+}
+
+type StatusSegments = {
+  onTime: number
+  late: number
+  invalid: number
+  missing: number
+  total: number
+}
+
+const STATUS_COLORS = {
+  onTime: '#10b981',
+  late: '#0ea5e9',
+  invalid: '#f59e0b',
+  missing: '#f43f5e',
+}
+
+function buildStatusSegments(expected: number, submitted: number, late: number, invalid: number): StatusSegments {
+  const safeExpected = Math.max(0, expected || 0)
+  const safeSubmitted = Math.max(0, Math.min(submitted || 0, safeExpected))
+  const safeLate = Math.max(0, Math.min(late || 0, safeSubmitted))
+  const safeInvalid = Math.max(0, Math.min(invalid || 0, safeExpected - safeSubmitted))
+  return {
+    onTime: safeSubmitted - safeLate,
+    late: safeLate,
+    invalid: safeInvalid,
+    missing: Math.max(0, safeExpected - safeSubmitted - safeInvalid),
+    total: safeExpected,
   }
-  if (studentListIncludes(classStat.补交无效名单, studentNo)) {
-    return { className: 'border-rose-200 bg-rose-50 text-rose-800', label: '补交无效' }
+}
+
+function segmentGradient(segments: StatusSegments): string {
+  const total = segments.total
+  if (!total) return '#e2e8f0'
+  const parts: string[] = []
+  let cursor = 0
+  const add = (count: number, color: string) => {
+    if (count <= 0) return
+    const next = cursor + (count / total) * 360
+    parts.push(`${color} ${cursor.toFixed(2)}deg ${next.toFixed(2)}deg`)
+    cursor = next
   }
-  if (studentListIncludes(classStat.补交附件缺失名单, studentNo)) {
-    return { className: 'border-orange-200 bg-orange-50 text-orange-800', label: '附件缺失' }
+  add(segments.onTime, STATUS_COLORS.onTime)
+  add(segments.late, STATUS_COLORS.late)
+  add(segments.invalid, STATUS_COLORS.invalid)
+  add(segments.missing, STATUS_COLORS.missing)
+  return `conic-gradient(${parts.join(', ')})`
+}
+
+function buildAttentionRecords(classStat: ClassStat): AttentionRecord[] {
+  const records = new Map<string, AttentionRecord>()
+  const add = (list: string[] | undefined, tone: { className: string; label: string }) => {
+    for (const item of list || []) {
+      const studentNo = extractStudentNo(item)
+      records.set(studentNo, { studentNo, label: tone.label, className: tone.className })
+    }
   }
-  return { className: 'border-amber-200 bg-amber-50 text-amber-800', label: '未交' }
+
+  add(classStat.未交名单, { className: 'border-rose-200 bg-rose-50 text-rose-800', label: '未提交' })
+  add(classStat.后缀格式无效名单, { className: 'border-amber-200 bg-amber-50 text-amber-800', label: '后缀格式无效' })
+  add(classStat.已补交名单, { className: 'border-sky-200 bg-sky-50 text-sky-800', label: '补交' })
+
+  return [...records.values()].sort((a, b) => a.studentNo.localeCompare(b.studentNo))
+}
+
+function buildOtherSubmissionRecords(stat: SubmissionStat | null): OtherSubmissionRecord[] {
+  if (!stat) return []
+  const records = new Map<string, OtherSubmissionRecord>()
+  const add = (list: string[] | undefined, label: string, className: string) => {
+    for (const item of list || []) {
+      const studentNo = extractStudentNo(item)
+      if (!records.has(studentNo)) {
+        records.set(studentNo, { studentNo, label, className })
+      }
+    }
+  }
+
+  add(stat.其他已交名单, '已提交', 'border-emerald-200 bg-emerald-50 text-emerald-800')
+  add(stat.其他已补交名单, '补交', 'border-sky-200 bg-sky-50 text-sky-800')
+  add(stat.其他后缀格式无效名单, '后缀格式无效', 'border-amber-200 bg-amber-50 text-amber-800')
+
+  return [...records.values()].sort((a, b) => a.studentNo.localeCompare(b.studentNo))
 }
 
 type DonutProps = {
   rate: number
+  segments?: StatusSegments
   size?: number
   label?: string
   color?: string
@@ -284,10 +360,11 @@ function AppIcon({ name, className = 'h-4 w-4' }: { name: IconName; className?: 
   )
 }
 
-function DonutChart({ rate, size = 116, label, color = '#0284c7' }: DonutProps) {
+function DonutChart({ rate, segments, size = 116, label, color = '#0284c7' }: DonutProps) {
   const r = clampRate(rate)
   const degree = Math.round(r * 360)
   const value = `${(r * 100).toFixed(2)}%`
+  const background = segments ? segmentGradient(segments) : `conic-gradient(${color} 0 ${degree}deg, #e2e8f0 ${degree}deg 360deg)`
 
   return (
     <div className="inline-flex flex-col items-center justify-center gap-2">
@@ -296,7 +373,7 @@ function DonutChart({ rate, size = 116, label, color = '#0284c7' }: DonutProps) 
         style={{
           width: `${size}px`,
           height: `${size}px`,
-          background: `conic-gradient(${color} 0 ${degree}deg, #e2e8f0 ${degree}deg 360deg)`,
+          background,
         }}
       >
         <div
@@ -307,6 +384,40 @@ function DonutChart({ rate, size = 116, label, color = '#0284c7' }: DonutProps) 
         </div>
       </div>
       {label && <p className="text-xs text-slate-500 text-center">{label}</p>}
+    </div>
+  )
+}
+
+function StatusProgressBar({ segments }: { segments: StatusSegments }) {
+  if (!segments.total) {
+    return <div className="mt-3 h-2 w-full rounded-full bg-slate-200" />
+  }
+  const width = (count: number) => `${((count / segments.total) * 100).toFixed(2)}%`
+  return (
+    <div className="mt-3 flex h-2 w-full overflow-hidden rounded-full bg-slate-100">
+      <div className="h-full bg-emerald-500" style={{ width: width(segments.onTime) }} />
+      <div className="h-full bg-sky-500" style={{ width: width(segments.late) }} />
+      <div className="h-full bg-amber-500" style={{ width: width(segments.invalid) }} />
+      <div className="h-full bg-rose-500" style={{ width: width(segments.missing) }} />
+    </div>
+  )
+}
+
+function StatusLegend() {
+  const items = [
+    ['已提交', 'bg-emerald-500'],
+    ['补交', 'bg-sky-500'],
+    ['后缀格式无效', 'bg-amber-500'],
+    ['未提交', 'bg-rose-500'],
+  ] as const
+  return (
+    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+      {items.map(([label, colorClass]) => (
+        <span key={label} className="inline-flex items-center gap-1">
+          <span className={`h-2 w-2 rounded-full ${colorClass}`} />
+          {label}
+        </span>
+      ))}
     </div>
   )
 }
@@ -551,10 +662,7 @@ function App() {
     return Object.entries(selected.班级统计).sort(([a], [b]) => a.localeCompare(b))
   }, [selected])
 
-  const otherSubmittedList = useMemo(() => {
-    if (!selected?.其他已交名单?.length) return []
-    return selected.其他已交名单.map((studentNo) => extractStudentNo(studentNo))
-  }, [selected])
+  const otherSubmissionRecords = useMemo(() => buildOtherSubmissionRecords(selected), [selected])
 
   const aggregate = useMemo(() => {
     return classEntries.reduce(
@@ -562,9 +670,11 @@ function App() {
         acc.expected += stat.应交人数
         acc.submitted += stat.已交人数
         acc.missing += stat.未交人数
+        acc.late += stat.已补交人数 || 0
+        acc.invalid += stat.后缀格式无效人数 || 0
         return acc
       },
-      { expected: 0, submitted: 0, missing: 0 },
+      { expected: 0, submitted: 0, missing: 0, late: 0, invalid: 0 },
     )
   }, [classEntries])
 
@@ -573,6 +683,7 @@ function App() {
   const summarySubmitted = aggregate.submitted
   const summaryMissing = aggregate.missing
   const summaryRate = aggregateRate
+  const summarySegments = buildStatusSegments(summaryExpected, summarySubmitted, aggregate.late, aggregate.invalid)
   const courseTopic = selectedCourseItem?.主题 || collectionIndex?.主题 || selectedSubmissionData?.主题 || '提交追踪看板'
   const courseAudience = selectedCourseItem?.对象 || collectionIndex?.对象 || selectedSubmissionData?.对象 || ''
   const coursePeriod = selectedCourseItem?.周期 || collectionIndex?.周期 || selectedSubmissionData?.周期 || ''
@@ -732,15 +843,13 @@ function App() {
                       <p className="break-all text-sm font-medium text-slate-800">{content}</p>
                       {summary &&
                         (selectedContentList.length > 1 ||
-                          !!summary.无效附件人数 ||
-                          !!summary.附件缺失人数 ||
+                          !!summary.后缀格式无效人数 ||
                           !!summary.已补交人数) && (
                         <p className="mt-1 text-xs text-slate-500">
                           {[
-                            selectedContentList.length > 1 ? `已交 ${summary.已交人数} / 应交 ${summary.应交人数}` : '',
-                            summary.无效附件人数 ? `无效附件 ${summary.无效附件人数} 人` : '',
-                            summary.附件缺失人数 ? `本地附件缺失 ${summary.附件缺失人数} 人` : '',
+                            selectedContentList.length > 1 ? `最终提交 ${summary.已交人数} / 应交 ${summary.应交人数}` : '',
                             summary.已补交人数 ? `补交 ${summary.已补交人数} 人` : '',
+                            summary.后缀格式无效人数 ? `后缀格式无效 ${summary.后缀格式无效人数} 人` : '',
                           ]
                             .filter(Boolean)
                             .join('，')}
@@ -768,30 +877,27 @@ function App() {
                 <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
                   <p className="flex items-center gap-2 text-xs text-slate-500">
                     <AppIcon name="list" className="h-4 w-4 text-emerald-700" />
-                    应交 / 已交 / 未交
+                    应交 / 最终提交 / 未提交
                   </p>
                   <p className="mt-1 text-xl font-semibold tracking-tight text-slate-800">
                     {summaryExpected} / {summarySubmitted} / {summaryMissing}
                   </p>
-                  <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-emerald-100">
-                    <div
-                      className="h-full rounded-full bg-emerald-500 transition-all"
-                      style={{ width: `${(summaryRate * 100).toFixed(2)}%` }}
-                    />
-                  </div>
-                  <p className="mt-2 text-xs text-emerald-700">提交进度 {(summaryRate * 100).toFixed(2)}%</p>
+                  <StatusProgressBar segments={summarySegments} />
+                  <StatusLegend />
+                  <p className="mt-2 text-xs text-emerald-700">最终提交率 {(summaryRate * 100).toFixed(2)}%</p>
                 </div>
               </div>
               <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 lg:sticky lg:top-4">
                 <p className="flex items-center gap-2 text-xs text-slate-500">
                   <AppIcon name="donut" className="h-4 w-4 text-indigo-700" />
-                  当前提交序号总提交率
+                  当前提交序号最终提交率
                 </p>
                 <div className="mt-3 flex items-center justify-center">
                   <DonutChart
                     rate={summaryRate}
+                    segments={summarySegments}
                     size={148}
-                    label="已交 vs 未交"
+                    label="最终提交构成"
                     color="#0ea5e9"
                   />
                 </div>
@@ -814,7 +920,15 @@ function App() {
 
         <section className="mt-6 grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-4">
           {selected &&
-            classEntries.map(([className, classStat]) => (
+            classEntries.map(([className, classStat]) => {
+              const classSegments = buildStatusSegments(
+                classStat.应交人数,
+                classStat.已交人数,
+                classStat.已补交人数 || 0,
+                classStat.后缀格式无效人数 || 0,
+              )
+              const attentionRecords = buildAttentionRecords(classStat)
+              return (
                 <article key={className} className="animate-rise rounded-2xl border border-sky-100 bg-white/95 p-4 shadow-[0_20px_45px_rgba(14,165,233,0.1)] backdrop-blur">
                   <div className="mb-3 flex items-end justify-between border-b border-slate-100 pb-2">
                     <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900">
@@ -823,43 +937,40 @@ function App() {
                     </h2>
                     <p className="flex items-center gap-1 text-xs text-slate-500">
                       <AppIcon name="warn" className="h-3.5 w-3.5 text-amber-600" />
-                      未交 {classStat.未交人数} / {classStat.应交人数}
+                      未提交 {classSegments.missing} / 应交 {classStat.应交人数}
                     </p>
                   </div>
                   <div className="mb-3 flex items-center justify-between rounded-xl border border-sky-100 bg-sky-50/50 p-2">
-                    <DonutChart rate={classStat.提交率} size={78} label={`${className} 提交占比`} color="#14b8a6" />
+                    <DonutChart rate={classStat.提交率} segments={classSegments} size={78} label={`${className} 最终提交构成`} color="#14b8a6" />
                     <div className="text-right">
                       <p className="flex items-center justify-end gap-1 text-xs text-slate-500">
                         <AppIcon name="trend" className="h-3.5 w-3.5 text-teal-700" />
-                        班级提交率
+                        班级最终提交率
                       </p>
                       <p className="text-base font-semibold text-teal-700">{(classStat.提交率 * 100).toFixed(2)}%</p>
                     </div>
                   </div>
-                  <p className="mb-2 text-center text-xs font-medium text-slate-500">未提交的学号名单</p>
+                  <p className="mb-2 text-center text-xs font-medium text-slate-500">补交与异常名单</p>
                   <ul className="space-y-2 text-sm">
-                    {classStat.未交名单.length ? (
-                      classStat.未交名单.map((name) => {
-                        const studentNo = extractStudentNo(name)
-                        const tone = missingStudentTone(classStat, studentNo)
-                        return (
-                          <li
-                            key={name}
-                            className={`flex items-center justify-between gap-2 rounded-lg border px-2 py-1 text-xs ${tone.className}`}
-                          >
-                            <span className="font-medium">{studentNo}</span>
-                            <span>{tone.label}</span>
-                          </li>
-                        )
-                      })
+                    {attentionRecords.length ? (
+                      attentionRecords.map((record) => (
+                        <li
+                          key={record.studentNo}
+                          className={`flex items-center justify-between gap-2 rounded-lg border px-2 py-1 text-xs ${record.className}`}
+                        >
+                          <span className="font-medium">{record.studentNo}</span>
+                          <span>{record.label}</span>
+                        </li>
+                      ))
                     ) : (
                       <li className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-center text-emerald-700">
-                        本班全部已提交
+                        本班全部截止前有效提交
                       </li>
                     )}
                   </ul>
                 </article>
-              ))}
+              )
+            })}
 
           {!selected && !error && !routeError && collectionIndex && !isSubmissionLoading && (
             <article className="col-span-full animate-rise rounded-2xl border border-slate-200 bg-white/95 p-6 text-center text-slate-600 shadow-[0_20px_45px_rgba(14,165,233,0.08)]">
@@ -871,17 +982,18 @@ function App() {
         {selected && (
           <section className="mt-6 rounded-2xl border border-emerald-200 bg-white/95 p-5 shadow-[0_20px_45px_rgba(16,185,129,0.1)]">
             <div className="mb-3 flex items-center justify-between gap-2">
-              <h3 className="text-base font-semibold text-slate-900">其他（重修/补修）已提交名单</h3>
-              <span className="text-xs text-emerald-700">已提交 {otherSubmittedList.length} 人</span>
+              <h3 className="text-base font-semibold text-slate-900">其他（重修/补修）提交记录</h3>
+              <span className="text-xs text-emerald-700">记录 {otherSubmissionRecords.length} 人</span>
             </div>
-            {otherSubmittedList.length ? (
+            {otherSubmissionRecords.length ? (
               <ul className="grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-2 text-sm">
-                {otherSubmittedList.map((studentNo) => (
+                {otherSubmissionRecords.map((record) => (
                   <li
-                    key={studentNo}
-                    className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-center text-emerald-800"
+                    key={record.studentNo}
+                    className={`flex items-center justify-between gap-2 rounded-lg border px-2 py-1 text-xs ${record.className}`}
                   >
-                    {studentNo}
+                    <span className="font-medium">{record.studentNo}</span>
+                    <span>{record.label}</span>
                   </li>
                 ))}
               </ul>

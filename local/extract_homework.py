@@ -972,29 +972,13 @@ def resolve_submission_cutoffs(
     return cutoffs
 
 
-def build_missing_attachment_summary(stat: dict[str, Any]) -> dict[str, Any]:
+def build_invalid_suffix_summary(stat: dict[str, Any]) -> dict[str, Any]:
     by_class: dict[str, list[str]] = {}
     for class_name, class_stat in stat.get("班级统计", {}).items():
-        missing = sorted(set(class_stat.get("已交但附件缺失名单", [])))
-        if missing:
-            by_class[class_name] = missing
-    other = sorted(set(stat.get("其他已交但附件缺失名单", [])))
-    if other:
-        by_class["其他"] = other
-    total = sum(len(items) for items in by_class.values())
-    summary: dict[str, Any] = {"总人数": total, "班级统计": by_class}
-    if total:
-        summary["同步提示"] = "检测到表格有提交记录但本地未找到附件，若归档中已有文件则不会回退。"
-    return summary
-
-
-def build_invalid_attachment_summary(stat: dict[str, Any]) -> dict[str, Any]:
-    by_class: dict[str, list[str]] = {}
-    for class_name, class_stat in stat.get("班级统计", {}).items():
-        invalid = sorted(set(class_stat.get("无效附件名单", [])))
+        invalid = sorted(set(class_stat.get("后缀格式无效名单", [])))
         if invalid:
             by_class[class_name] = invalid
-    other = sorted(set(stat.get("其他无效附件名单", [])))
+    other = sorted(set(stat.get("其他后缀格式无效名单", [])))
     if other:
         by_class["其他"] = other
     total = sum(len(items) for items in by_class.values())
@@ -1039,159 +1023,189 @@ def make_submission_stat(
     valid_submit_times: list[pd.Timestamp] = []
     total_expected = 0
     total_submitted = 0
-    total_missing = 0
+    total_cutoff_submitted = 0
+    total_late_submitted = 0
     total_invalid = 0
 
     for content_label in content_labels:
         content_stats[content_label] = {"班级统计": {}}
 
     for class_name, students in students_by_class.items():
-        complete_students: list[str] = []
-        not_complete_students: list[str] = []
-        class_missing_students: set[str] = set()
+        cutoff_complete_students: list[str] = []
+        cutoff_not_complete_students: list[str] = []
+        final_complete_students: list[str] = []
+        final_not_complete_students: list[str] = []
         class_invalid_students: set[str] = set()
         class_late_complete_students: set[str] = set()
-        class_late_missing_students: set[str] = set()
-        class_late_invalid_students: set[str] = set()
 
         for content_label in content_labels:
-            content_submitted: list[str] = []
-            content_not_submitted: list[str] = []
-            content_missing: list[str] = []
+            content_cutoff_submitted: list[str] = []
+            content_cutoff_not_submitted: list[str] = []
+            content_final_submitted: list[str] = []
+            content_final_not_submitted: list[str] = []
             content_invalid: list[str] = []
             content_late_submitted: list[str] = []
-            content_late_missing: list[str] = []
-            content_late_invalid: list[str] = []
             for student in students:
-                entry = active_entry_for(manifest, student["学号"], submission_label, content_label, cutoff)
-                if entry and entry.get("状态") == "active":
-                    content_submitted.append(student["学号"])
+                cutoff_entry = active_entry_for(manifest, student["学号"], submission_label, content_label, cutoff)
+                final_entry = active_entry_for(manifest, student["学号"], submission_label, content_label, None)
+                cutoff_active = bool(cutoff_entry and cutoff_entry.get("状态") == "active")
+                final_active = bool(final_entry and final_entry.get("状态") == "active")
+                final_invalid = bool(
+                    not final_active
+                    and (
+                        (final_entry and final_entry.get("状态") == "invalid")
+                        or (cutoff_entry and cutoff_entry.get("状态") == "invalid")
+                    )
+                )
+
+                if cutoff_active:
+                    content_cutoff_submitted.append(student["学号"])
+                else:
+                    content_cutoff_not_submitted.append(student["学号"])
+
+                if final_active:
+                    content_final_submitted.append(student["学号"])
+                    if not cutoff_active:
+                        content_late_submitted.append(student["学号"])
+                    entry = final_entry
                     ts = parse_datetime_text(entry.get("提交时间"))
                     if ts is not None:
                         valid_submit_times.append(ts)
                 else:
-                    content_not_submitted.append(student["学号"])
-                    if entry and entry.get("状态") == "missing":
-                        content_missing.append(student["学号"])
-                        class_missing_students.add(student["学号"])
-                    if entry and entry.get("状态") == "invalid":
+                    content_final_not_submitted.append(student["学号"])
+                    if final_invalid:
                         content_invalid.append(student["学号"])
                         class_invalid_students.add(student["学号"])
-                    late_entry = latest_version_after_cutoff(manifest, student["学号"], submission_label, content_label, cutoff)
-                    if late_entry and late_entry.get("状态") == "active":
-                        content_late_submitted.append(student["学号"])
-                    elif late_entry and late_entry.get("状态") == "missing":
-                        content_late_missing.append(student["学号"])
-                    elif late_entry and late_entry.get("状态") == "invalid":
-                        content_late_invalid.append(student["学号"])
             content_stats[content_label]["班级统计"][class_name] = {
                 "应交人数": len(students),
-                "已交人数": len(content_submitted),
-                "未交人数": len(content_not_submitted),
-                "提交率": round((len(content_submitted) / len(students)) if students else 0, 4),
-                "已交名单": sorted(content_submitted),
-                "未交名单": sorted(content_not_submitted),
-                "已交但附件缺失人数": len(content_missing),
-                "已交但附件缺失名单": sorted(content_missing),
-                "无效附件人数": len(content_invalid),
-                "无效附件名单": sorted(content_invalid),
+                "截止已交人数": len(content_cutoff_submitted),
+                "截止未达标人数": len(content_cutoff_not_submitted),
+                "截止提交率": round((len(content_cutoff_submitted) / len(students)) if students else 0, 4),
+                "截止已交名单": sorted(content_cutoff_submitted),
+                "截止未达标名单": sorted(content_cutoff_not_submitted),
+                "已交人数": len(content_final_submitted),
+                "未交人数": len(content_final_not_submitted),
+                "提交率": round((len(content_final_submitted) / len(students)) if students else 0, 4),
+                "已交名单": sorted(content_final_submitted),
+                "未交名单": sorted(content_final_not_submitted),
+                "后缀格式无效人数": len(content_invalid),
+                "后缀格式无效名单": sorted(content_invalid),
                 "已补交人数": len(content_late_submitted),
                 "已补交名单": sorted(content_late_submitted),
-                "补交附件缺失人数": len(content_late_missing),
-                "补交附件缺失名单": sorted(content_late_missing),
-                "补交无效人数": len(content_late_invalid),
-                "补交无效名单": sorted(content_late_invalid),
             }
 
         for student in students:
-            entries = [
+            cutoff_entries = [
                 active_entry_for(manifest, student["学号"], submission_label, content_label, cutoff)
                 for content_label in content_labels
             ]
-            if entries and all(entry and entry.get("状态") == "active" for entry in entries):
-                complete_students.append(student["学号"])
+            final_entries = [
+                active_entry_for(manifest, student["学号"], submission_label, content_label, None)
+                for content_label in content_labels
+            ]
+            cutoff_complete = bool(cutoff_entries and all(entry and entry.get("状态") == "active" for entry in cutoff_entries))
+            final_complete = bool(final_entries and all(entry and entry.get("状态") == "active" for entry in final_entries))
+            final_invalid = bool(
+                not final_complete
+                and (
+                    any(entry and entry.get("状态") == "invalid" for entry in final_entries)
+                    or any(entry and entry.get("状态") == "invalid" for entry in cutoff_entries)
+                )
+            )
+
+            if cutoff_complete:
+                cutoff_complete_students.append(student["学号"])
             else:
-                not_complete_students.append(student["学号"])
-                late_entries = [
-                    latest_version_after_cutoff(manifest, student["学号"], submission_label, content_label, cutoff)
-                    for content_label in content_labels
-                ]
-                if late_entries and all(entry and entry.get("状态") == "active" for entry in late_entries):
+                cutoff_not_complete_students.append(student["学号"])
+
+            if final_complete:
+                final_complete_students.append(student["学号"])
+                if not cutoff_complete:
                     class_late_complete_students.add(student["学号"])
-                elif any(entry and entry.get("状态") == "invalid" for entry in late_entries):
-                    class_late_invalid_students.add(student["学号"])
-                elif any(entry and entry.get("状态") == "missing" for entry in late_entries):
-                    class_late_missing_students.add(student["学号"])
+            else:
+                final_not_complete_students.append(student["学号"])
+                if final_invalid:
+                    class_invalid_students.add(student["学号"])
 
         expected_count = len(students)
-        submitted_count = len(complete_students)
+        cutoff_submitted_count = len(cutoff_complete_students)
+        late_submitted_count = len(class_late_complete_students)
+        submitted_count = len(final_complete_students)
         total_expected += expected_count
         total_submitted += submitted_count
-        total_missing += len(class_missing_students)
+        total_cutoff_submitted += cutoff_submitted_count
+        total_late_submitted += late_submitted_count
         total_invalid += len(class_invalid_students)
         stat["班级统计"][class_name] = {
             "应交人数": expected_count,
+            "截止已交人数": cutoff_submitted_count,
+            "截止未达标人数": expected_count - cutoff_submitted_count,
+            "截止提交率": round((cutoff_submitted_count / expected_count) if expected_count else 0, 4),
+            "截止已交名单": sorted(cutoff_complete_students),
+            "截止未达标名单": sorted(cutoff_not_complete_students),
             "已交人数": submitted_count,
             "未交人数": expected_count - submitted_count,
             "提交率": round((submitted_count / expected_count) if expected_count else 0, 4),
-            "已交名单": sorted(complete_students),
-            "未交名单": sorted(not_complete_students),
-            "已交但附件缺失人数": len(class_missing_students),
-            "已交但附件缺失名单": sorted(class_missing_students),
-            "无效附件人数": len(class_invalid_students),
-            "无效附件名单": sorted(class_invalid_students),
-            "已补交人数": len(class_late_complete_students),
+            "已交名单": sorted(final_complete_students),
+            "未交名单": sorted(final_not_complete_students),
+            "后缀格式无效人数": len(class_invalid_students),
+            "后缀格式无效名单": sorted(class_invalid_students),
+            "已补交人数": late_submitted_count,
             "已补交名单": sorted(class_late_complete_students),
-            "补交附件缺失人数": len(class_late_missing_students),
-            "补交附件缺失名单": sorted(class_late_missing_students),
-            "补交无效人数": len(class_late_invalid_students),
-            "补交无效名单": sorted(class_late_invalid_students),
         }
         stat["补交状态"][class_name] = {
             "已补交名单": sorted(class_late_complete_students),
-            "补交无效名单": sorted(class_late_invalid_students),
-            "补交附件缺失名单": sorted(class_late_missing_students),
         }
 
     other_submitted: list[str] = []
-    other_missing: set[str] = set()
     other_invalid: set[str] = set()
+    other_late_submitted: list[str] = []
     for student in other_students_by_name.values():
-        entries = [
+        cutoff_entries = [
             active_entry_for(manifest, student["学号"], submission_label, content_label, cutoff)
             for content_label in content_labels
         ]
-        if entries and all(entry and entry.get("状态") == "active" for entry in entries):
+        final_entries = [
+            active_entry_for(manifest, student["学号"], submission_label, content_label, None)
+            for content_label in content_labels
+        ]
+        cutoff_complete = bool(cutoff_entries and all(entry and entry.get("状态") == "active" for entry in cutoff_entries))
+        final_complete = bool(final_entries and all(entry and entry.get("状态") == "active" for entry in final_entries))
+        if cutoff_complete:
             other_submitted.append(student["学号"])
-            for entry in entries:
+            for entry in cutoff_entries:
+                ts = parse_datetime_text(entry.get("提交时间")) if entry else None
+                if ts is not None:
+                    valid_submit_times.append(ts)
+        elif final_complete:
+            other_late_submitted.append(student["学号"])
+            for entry in final_entries:
                 ts = parse_datetime_text(entry.get("提交时间")) if entry else None
                 if ts is not None:
                     valid_submit_times.append(ts)
         else:
-            for entry in entries:
+            for entry in final_entries + cutoff_entries:
                 if not entry:
                     continue
-                if entry.get("状态") == "missing":
-                    other_missing.add(student["学号"])
                 if entry.get("状态") == "invalid":
                     other_invalid.add(student["学号"])
 
     if valid_submit_times:
         stat["最后提交时间"] = format_datetime(max(valid_submit_times))
     stat["其他已交名单"] = sorted(other_submitted)
-    stat["其他已交但附件缺失名单"] = sorted(other_missing)
-    stat["其他无效附件名单"] = sorted(other_invalid)
+    stat["其他后缀格式无效名单"] = sorted(other_invalid)
+    stat["其他已补交名单"] = sorted(other_late_submitted)
     stat["汇总"] = {
         "应交总人数": total_expected,
+        "截止已交总人数": total_cutoff_submitted,
+        "已补交总人数": total_late_submitted,
         "已交总人数": total_submitted,
         "未交总人数": total_expected - total_submitted,
         "总提交率": round((total_submitted / total_expected) if total_expected else 0, 4),
-        "已交但附件缺失总人数": total_missing + len(other_missing),
-        "无效附件总人数": total_invalid + len(other_invalid),
+        "后缀格式无效总人数": total_invalid + len(other_invalid),
     }
     stat["提交内容统计"] = content_stats
-    stat["附件缺失"] = build_missing_attachment_summary(stat)
-    stat["无效附件"] = build_invalid_attachment_summary(stat)
+    stat["后缀格式无效"] = build_invalid_suffix_summary(stat)
     return stat
 
 
@@ -1207,12 +1221,13 @@ def active_entries_for_submission(
         versions = [
             version
             for version in entry.get("versions", [])
-            if isinstance(version, dict)
-            and version.get("状态") == "active"
-            and entry_time_within_cutoff(version, cutoff)
+            if isinstance(version, dict) and entry_time_within_cutoff(version, cutoff)
         ]
-        if versions:
-            entries.append(merged_entry_version(entry, sorted(versions, key=version_sort_key)[-1]))
+        if not versions:
+            continue
+        latest = sorted(versions, key=version_sort_key)[-1]
+        if latest.get("状态") == "active":
+            entries.append(merged_entry_version(entry, latest))
     return sorted(entries, key=lambda item: (str(item.get("提交内容名", "")), str(item.get("班级", "")), str(item.get("学号", ""))))
 
 
@@ -1255,12 +1270,9 @@ def write_submission_reports(
     stats_dir.mkdir(parents=True, exist_ok=True)
     token = sanitize_filename_component(submission_label)
     (stats_dir / f"{token}.json").write_text(dump_json(stat), encoding="utf-8")
-    missing = stat.get("附件缺失", {})
-    invalid = stat.get("无效附件", {})
-    if int(missing.get("总人数", 0) or 0) > 0:
-        (stats_dir / f"{token}.missing_attachments.json").write_text(dump_json(missing), encoding="utf-8")
+    invalid = stat.get("后缀格式无效", {})
     if int(invalid.get("总人数", 0) or 0) > 0:
-        (stats_dir / f"{token}.invalid_attachments.json").write_text(dump_json(invalid), encoding="utf-8")
+        (stats_dir / f"{token}.invalid_suffix.json").write_text(dump_json(invalid), encoding="utf-8")
 
 
 def read_json_object(path: Path) -> dict[str, Any]:
@@ -1301,15 +1313,37 @@ def write_collection_web_data(
     course_index_path: Path,
     meta: dict[str, str],
     submission_stats: dict[str, dict[str, Any]],
-    ordered_labels: list[str],
+    selected_labels: list[str],
+    all_labels: list[str],
 ) -> None:
     web_data_root.mkdir(parents=True, exist_ok=True)
     course_slug = sanitize_filename_component(meta["课程"])
-    tokens = build_path_tokens(ordered_labels)
-    keep_files: set[str] = set()
-    submission_refs: list[dict[str, Any]] = []
+    index_filename = f"{course_slug}.index.json"
+    index_path = web_data_root / index_filename
+    existing_refs: dict[str, dict[str, Any]] = {}
+    if index_path.exists():
+        existing_index = read_json_object(index_path)
+        refs = existing_index.get("提交序号列表", [])
+        if not isinstance(refs, list):
+            raise ValueError(f"收集表索引提交序号列表无效: {index_path}")
+        for item in refs:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("提交序号", "")).strip()
+            if label:
+                existing_refs[label] = item
 
-    for label in ordered_labels:
+    full_refresh = set(selected_labels) == set(all_labels)
+    if full_refresh:
+        final_labels = all_labels
+        existing_refs = {label: ref for label, ref in existing_refs.items() if label in set(all_labels)}
+    else:
+        final_labels = sorted(set(existing_refs) | set(selected_labels), key=sort_submission_key)
+
+    tokens = build_path_tokens(final_labels)
+    keep_files: set[str] = set()
+
+    for label in selected_labels:
         stat = submission_stats.get(label)
         if stat is None:
             continue
@@ -1319,16 +1353,19 @@ def write_collection_web_data(
         payload = dict(stat)
         payload["更新时间"] = now_text()
         (web_data_root / filename).write_text(dump_json(payload), encoding="utf-8")
-        submission_refs.append(
-            {
-                "提交序号": label,
-                "数据文件": f"data/{filename}",
-                "提交内容列表": stat.get("提交内容列表", []),
-            }
-        )
+        existing_refs[label] = {
+            "提交序号": label,
+            "数据文件": f"data/{filename}",
+            "提交内容列表": stat.get("提交内容列表", []),
+        }
 
-    index_filename = f"{course_slug}.index.json"
     keep_files.add(index_filename)
+    submission_refs = [existing_refs[label] for label in final_labels if label in existing_refs]
+    for item in submission_refs:
+        data_file = str(item.get("数据文件", "")).strip()
+        if data_file.startswith("data/"):
+            keep_files.add(data_file.removeprefix("data/"))
+
     index_payload = {
         "课程": meta["课程"],
         "主题": meta["主题"],
@@ -1340,9 +1377,10 @@ def write_collection_web_data(
     }
     (web_data_root / index_filename).write_text(dump_json(index_payload), encoding="utf-8")
 
-    for stale in web_data_root.glob(f"{course_slug}.*.json"):
-        if stale.name not in keep_files:
-            stale.unlink()
+    if full_refresh:
+        for stale in web_data_root.glob(f"{course_slug}.*.json"):
+            if stale.name not in keep_files:
+                stale.unlink()
 
     rebuild_course_index_from_data(web_data_root, course_index_path)
     rebuild_course_manifest(public_root=course_index_path.parent, course_index_path=course_index_path)
@@ -1447,7 +1485,7 @@ def process_collection(
         )
         stats[label] = stat
         write_submission_reports(course_out_dir, label, stat)
-        zip_paths.append(str(create_submission_zip(course_out_dir, label, manifest, cutoff)))
+        zip_paths.append(str(create_submission_zip(course_out_dir, label, manifest, None)))
 
     summary = {
         "课程": meta["课程"],
@@ -1480,7 +1518,8 @@ def process_collection(
         course_index_path=course_index_path,
         meta=meta,
         submission_stats=stats,
-        ordered_labels=selected_labels,
+        selected_labels=selected_labels,
+        all_labels=all_labels,
     )
     return summary
 
