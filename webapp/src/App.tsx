@@ -365,7 +365,7 @@ function App() {
         if (controller.signal.aborted) return
         setCourseHomeworkIndex(null)
         setSelectedHomeworkData(null)
-        setCourseError(e instanceof Error ? e.message : '课程数据加载失败')
+        setCourseError(e instanceof Error ? e.message : '收集表数据加载失败')
         setIsCourseLoading(false)
       })
 
@@ -435,7 +435,7 @@ function App() {
       .catch((e: unknown) => {
         if (controller.signal.aborted) return
         setSelectedHomeworkData(null)
-        setCourseError(e instanceof Error ? e.message : '作业数据加载失败')
+        setCourseError(e instanceof Error ? e.message : '提交数据加载失败')
         setIsHomeworkLoading(false)
       })
 
@@ -465,10 +465,10 @@ function App() {
 
   const routeError = useMemo(() => {
     if (!indexData) return ''
-    if (!routeCourse) return '路由缺少课程参数，请使用分享链接进入。'
-    if (!courseMap.has(routeCourse)) return `课程参数无效：${routeCourse}`
+    if (!routeCourse) return '路由缺少收集表参数，请使用分享链接进入。'
+    if (!courseMap.has(routeCourse)) return `收集表参数无效：${routeCourse}`
     if (routeHomework && courseHomeworkIndex && !homeworkMap.has(routeHomework)) {
-      return `作业参数无效：${routeHomework}`
+      return `提交序号参数无效：${routeHomework}`
     }
     return ''
   }, [courseHomeworkIndex, courseMap, homeworkMap, indexData, routeCourse, routeHomework])
@@ -528,7 +528,7 @@ function App() {
   const summarySubmitted = aggregate.submitted
   const summaryMissing = aggregate.missing
   const summaryRate = aggregateRate
-  const courseTopic = selectedCourseItem?.主题 || courseHomeworkIndex?.主题 || selectedHomeworkData?.主题 || '课程作业提交看板'
+  const courseTopic = selectedCourseItem?.主题 || courseHomeworkIndex?.主题 || selectedHomeworkData?.主题 || '提交追踪看板'
   const courseAudience = selectedCourseItem?.对象 || courseHomeworkIndex?.对象 || selectedHomeworkData?.对象 || ''
   const coursePeriod = selectedCourseItem?.周期 || courseHomeworkIndex?.周期 || selectedHomeworkData?.周期 || ''
   const courseStatus = selectedCourseItem?.状态 || courseHomeworkIndex?.状态 || selectedHomeworkData?.状态 || 'active'
@@ -576,7 +576,6 @@ function App() {
                 </div>
               )}
               <h1 className="mt-3 break-words text-2xl font-bold text-slate-900 md:text-4xl">{courseTopic}</h1>
-              {selectedCourse && <p className="mt-2 break-all text-xs text-slate-500">{selectedCourse}</p>}
             </div>
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-end">
               <button
@@ -586,7 +585,7 @@ function App() {
                 className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-800 transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
               >
                 <AppIcon name="share" className="h-4 w-4" />
-                分享当前课程链接
+                分享当前收集表链接
               </button>
               <a
                 href="https://homework.hicancan.top/"
@@ -619,7 +618,7 @@ function App() {
             <div>
               <label className="mb-2 flex items-center gap-2 text-sm text-slate-700" htmlFor="course-select">
                 <AppIcon name="book" className="h-4 w-4 text-sky-700" />
-                课程
+                收集表
               </label>
               <select
                 id="course-select"
@@ -631,7 +630,7 @@ function App() {
                 }}
                 disabled={!courseList.length}
               >
-                {!selectedCourse && <option value="">请选择课程</option>}
+                {!selectedCourse && <option value="">请选择收集表</option>}
                 {courseList.map((course) => (
                   <option key={course.课程} value={course.课程}>
                     {course.主题}[{course.对象}]{course.周期 ? `[${course.周期}]` : ''}
@@ -643,7 +642,7 @@ function App() {
             <div>
               <label className="mb-2 flex items-center gap-2 text-sm text-slate-700" htmlFor="hw-select">
                 <AppIcon name="hash" className="h-4 w-4 text-indigo-700" />
-                作业标签
+                提交序号
               </label>
               <select
                 id="hw-select"
@@ -686,11 +685,15 @@ function App() {
                   return (
                     <div key={content} className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
                       <p className="break-all text-sm font-medium text-slate-800">{content}</p>
-                      {summary && (
+                      {summary && (selectedContentList.length > 1 || !!summary.无效附件人数 || !!summary.附件缺失人数) && (
                         <p className="mt-1 text-xs text-slate-500">
-                          已交 {summary.已交人数} / 应交 {summary.应交人数}
-                          {summary.无效附件人数 ? `，无效 ${summary.无效附件人数}` : ''}
-                          {summary.附件缺失人数 ? `，附件缺失 ${summary.附件缺失人数}` : ''}
+                          {[
+                            selectedContentList.length > 1 ? `已交 ${summary.已交人数} / 应交 ${summary.应交人数}` : '',
+                            summary.无效附件人数 ? `无效 ${summary.无效附件人数}` : '',
+                            summary.附件缺失人数 ? `附件缺失 ${summary.附件缺失人数}` : '',
+                          ]
+                            .filter(Boolean)
+                            .join('，')}
                         </p>
                       )}
                     </div>
@@ -705,7 +708,7 @@ function App() {
               <div className="rounded-xl border border-sky-100 bg-sky-50/70 p-4">
                 <p className="flex items-center gap-2 text-xs text-slate-500">
                   <AppIcon name="clock" className="h-4 w-4 text-sky-700" />
-                  当前作业最后一位同学提交时间
+                  当前提交序号最后提交时间
                 </p>
                 <p className="mt-1 text-xl font-semibold tracking-tight text-sky-700">{selected?.最后提交时间 || '-'}</p>
               </div>
@@ -729,7 +732,7 @@ function App() {
             <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 lg:sticky lg:top-4">
               <p className="flex items-center gap-2 text-xs text-slate-500">
                 <AppIcon name="donut" className="h-4 w-4 text-indigo-700" />
-                当前作业总提交率饼状图
+                当前提交序号总提交率
               </p>
               <div className="mt-3 flex items-center justify-center">
                 <DonutChart
@@ -798,7 +801,7 @@ function App() {
 
           {!selected && !error && courseHomeworkIndex && !isHomeworkLoading && (
             <article className="col-span-full animate-rise rounded-2xl border border-slate-200 bg-white/95 p-6 text-center text-slate-600 shadow-[0_20px_45px_rgba(14,165,233,0.08)]">
-              当前课程暂无作业提交数据
+              当前收集表暂无提交数据
             </article>
           )}
         </section>
@@ -822,7 +825,7 @@ function App() {
               </ul>
             ) : (
               <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-center text-sm text-slate-600">
-                当前作业暂无“其他”同学提交记录
+                当前提交序号暂无“其他”同学提交记录
               </p>
             )}
           </section>
