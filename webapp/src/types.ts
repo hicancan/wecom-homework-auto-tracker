@@ -45,7 +45,7 @@ export type CollectionIndex = {
 export type ClassStat = {
   应交人数: number
   截止已交人数?: number
-  截止未达标人数?: number
+  截止未交人数?: number
   截止提交率?: number
   截止已交名单?: string[]
   截止未达标名单?: string[]

@@ -286,7 +286,7 @@ export function CollectionPage() {
             <section className="grid gap-5 lg:grid-cols-[1fr_320px]">
               <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-5">
                 <p className="text-sm font-semibold text-emerald-700">
-                  {allowMakeup ? '应交 / 已接收 / 未达标' : '应交 / 截止提交 / 未达标'}
+                  {allowMakeup ? '应交 / 已接收 / 未交' : '应交 / 截止提交 / 未交'}
                 </p>
                 <p className="mt-3 text-4xl font-bold text-slate-900">
                   {expected} / {submitted} / {summary?.未交总人数 ?? 0}

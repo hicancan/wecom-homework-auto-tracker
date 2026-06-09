@@ -17,7 +17,7 @@ const tones = {
   submitted: { label: '已提交', className: 'border-emerald-200 bg-emerald-50 text-emerald-800' },
   late: { label: '补交', className: 'border-sky-200 bg-sky-50 text-sky-800' },
   invalid: { label: '后缀格式无效', className: 'border-amber-200 bg-amber-50 text-amber-800' },
-  unmet: { label: '未达标', className: 'border-rose-200 bg-rose-50 text-rose-800' },
+  unmet: { label: '未交', className: 'border-rose-200 bg-rose-50 text-rose-800' },
 } satisfies Record<string, Tone>
 
 function addRecords(records: StudentRecord[], values: string[] | undefined, tone: Tone, seen: Set<string>) {
@@ -54,7 +54,7 @@ export function ClassStatusCard({ className, stat, allowMakeup }: { className: s
         <div>
           <h3 className="text-lg font-bold text-slate-900">{className}</h3>
           <p className="mt-1 text-sm text-slate-500">
-            应交 {stat.应交人数} / {allowMakeup ? '已接收' : '截止提交'} {stat.已交人数} / 未达标 {stat.未交人数}
+            应交 {stat.应交人数} / {allowMakeup ? '已接收' : '截止提交'} {stat.已交人数} / 未交 {stat.未交人数}
           </p>
         </div>
         <div className="text-right text-sm font-semibold text-slate-700">{(stat.提交率 * 100).toFixed(2)}%</div>
