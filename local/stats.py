@@ -7,6 +7,7 @@ import pandas as pd
 
 from archive import active_entry_for
 from contract import format_datetime, now_text, parse_datetime_text, sanitize_filename_component
+from web_publish import read_json_object
 
 
 def load_existing_submission_cutoffs(web_data_root: Path, meta: dict[str, str]) -> dict[str, pd.Timestamp]:
