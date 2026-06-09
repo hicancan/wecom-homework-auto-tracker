@@ -7,9 +7,7 @@ on:
       - main
     paths:
       - webapp/**
-      - local/build_course_manifest.py
-      - local/course_manifest.py
-      - local/extract_homework.py
+      - local/**
       - .github/workflows/pages.yml
 
 permissions:
@@ -52,17 +50,17 @@ jobs:
           now = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8)))
           deploy_time = now.strftime("%Y-%m-%d %H:%M:%S")
 
-          index_path = Path("webapp/public/courses.json")
+          index_path = Path("webapp/public/collections.json")
           if index_path.exists():
             index_data = json.loads(index_path.read_text(encoding="utf-8"))
           else:
-            index_data = {"课程列表": []}
+            index_data = {"收集表列表": []}
 
           index_data["最后部署时间"] = deploy_time
           index_path.parent.mkdir(parents=True, exist_ok=True)
           index_path.write_text(json.dumps(index_data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-          for item in index_data.get("课程列表", []):
+          for item in index_data.get("收集表列表", []):
             rel = item.get("数据文件")
             if not rel:
               continue
@@ -91,7 +89,7 @@ jobs:
           PY
 
       - name: Build course manifest
-        run: python3 local/build_course_manifest.py --public-root webapp/public --course-index webapp/public/courses.json
+        run: python3 local/build_course_manifest.py --public-root webapp/public --collection-index webapp/public/collections.json
 
       - name: Install dependencies
         working-directory: webapp

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -26,51 +25,33 @@ def _load_json_object(path: Path, label: str) -> dict[str, Any]:
     return data
 
 
-def _cleanup_legacy_hashed_files(public_root: Path) -> None:
-    for old_index in public_root.glob("courses.*.json"):
-        old_index.unlink()
-
-    data_dir = public_root / "data"
-    if not data_dir.exists():
-        return
-
-    for old_data in data_dir.glob("*.json"):
-        name = old_data.name
-        if ".hw" in name or name.endswith(".index.json"):
-            continue
-        if re.search(r"\.[0-9a-f]{12}\.json$", name):
-            old_data.unlink()
-
-
 def rebuild_course_manifest(public_root: Path, course_index_path: Path) -> dict[str, str]:
     public_root = public_root.expanduser().resolve()
     course_index_path = course_index_path.expanduser().resolve()
     if not course_index_path.exists():
-        raise FileNotFoundError(f"找不到课程索引文件: {course_index_path}")
+        raise FileNotFoundError(f"找不到收集表索引文件: {course_index_path}")
 
-    _cleanup_legacy_hashed_files(public_root)
-
-    index_data = _load_json_object(course_index_path, "课程索引")
-    raw_courses = index_data.get("课程列表", [])
-    if not isinstance(raw_courses, list):
-        raise ValueError("课程索引中的 '课程列表' 必须是数组。")
+    index_data = _load_json_object(course_index_path, "收集表索引")
+    raw_collections = index_data.get("收集表列表", [])
+    if not isinstance(raw_collections, list):
+        raise ValueError("收集表索引中的 '收集表列表' 必须是数组。")
 
     hash_input = bytearray()
     hash_input.extend(course_index_path.read_bytes())
 
-    for item in raw_courses:
+    for item in raw_collections:
         if not isinstance(item, dict):
             continue
         rel = str(item.get("数据文件", "")).strip()
         if not rel:
             continue
-        course_index_file = (public_root / rel).resolve()
-        if not course_index_file.exists():
-            raise FileNotFoundError(f"课程索引文件不存在: {rel} ({course_index_file})")
-        hash_input.extend(course_index_file.read_bytes())
+        collection_index_file = (public_root / rel).resolve()
+        if not collection_index_file.exists():
+            raise FileNotFoundError(f"收集表索引文件不存在: {rel} ({collection_index_file})")
+        hash_input.extend(collection_index_file.read_bytes())
 
-        course_data = _load_json_object(course_index_file, "收集表提交序号索引")
-        submission_list = course_data.get("提交序号列表", [])
+        collection_data = _load_json_object(collection_index_file, "收集表提交序号索引")
+        submission_list = collection_data.get("提交序号列表", [])
         if not isinstance(submission_list, list):
             continue
         for submission in submission_list:
@@ -89,7 +70,7 @@ def rebuild_course_manifest(public_root: Path, course_index_path: Path) -> dict[
     manifest: dict[str, Any] = {
         "version": version,
         "更新时间": now_text,
-        "indexFile": "courses.json",
+        "indexFile": str(course_index_path.relative_to(public_root)).replace("\\", "/"),
     }
 
     deploy_time = index_data.get("最后部署时间")

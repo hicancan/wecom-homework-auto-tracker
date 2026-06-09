@@ -6,6 +6,7 @@ out/
 .venv/
 config/*
 !config/config.template.json
+!config/other_students.template.json
 config/**/*.xlsx
 config/**/*.xls
 project_structure.txt

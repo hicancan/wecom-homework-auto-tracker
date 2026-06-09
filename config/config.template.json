@@ -7,16 +7,23 @@
   "zip_enabled": true,
   "out_root": "out",
   "web_data_root": "webapp/public/data",
-  "course_index": "webapp/public/courses.json",
-  "course_classes": {
-    "示例主题[B240401-03][大二下]": {
+  "collection_index": "webapp/public/collections.json",
+  "collections": {
+    "example-collection-b240401-sophomore-spring": {
+      "title": "示例主题[B240401][大二下]",
+      "excel": "config/示例主题[B240401][大二下].xlsx",
+      "status": "active",
       "classes": [
-        "B240401",
+        "B240401"
+      ]
+    },
+    "example-archived-b240402-sophomore-spring": {
+      "title": "示例归档主题[B240402][大二下]",
+      "excel": "",
+      "status": "archived",
+      "classes": [
         "B240402"
-      ],
-      "source": "auto",
-      "lock": false,
-      "detected_at": "2026-03-23 00:00:00"
+      ]
     }
   }
 }

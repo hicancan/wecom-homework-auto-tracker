@@ -11,13 +11,21 @@ from pathlib import Path
 import pandas as pd
 
 
-TITLE_RE = r"^.+\[[^\[\]]+\](?:\[[^\[\]]+\])?$"
+TITLE_RE = r"^[^\[\]]+\[[^\[\]]+\](?:\[[^\[\]]+\])?$"
+
+
+@dataclass(frozen=True)
+class CollectionConfig:
+    collection_id: str
+    title: str
+    excel: Path
+    status: str
 
 
 @dataclass(frozen=True)
 class PlanItem:
-    course: str
-    excel: Path
+    collection_id: str
+    title: str
     labels: list[str]
     cutoff_policy: str
     manual_cutoffs: dict[str, str]
@@ -27,31 +35,75 @@ def normalize_text(value: object) -> str:
     return " ".join(str(value or "").strip().split())
 
 
-def sanitize_filename_component(text: object) -> str:
-    return re.sub(r'[\\/:*?"<>|]', "_", str(text or "")).strip()
-
-
 def format_time(value: object) -> str:
-    if pd.isna(value):
+    if value is None or pd.isna(value):
         return ""
     return pd.to_datetime(value).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def is_new_model_title(title: str) -> bool:
-    import re
-
-    return re.fullmatch(TITLE_RE, title.strip()) is not None
-
-
-def discover_courses(courses_dir: Path) -> dict[str, Path]:
-    courses: dict[str, Path] = {}
-    for path in sorted(courses_dir.glob("*.xlsx")):
-        if path.name.startswith("~$"):
+def parse_selection(raw: str, count: int) -> list[int]:
+    text = raw.strip().lower().replace("，", ",").replace("、", ",")
+    if text == "all":
+        return list(range(1, count + 1))
+    picked: set[int] = set()
+    for part in text.split(","):
+        part = part.strip()
+        if not part:
             continue
-        if not is_new_model_title(path.stem):
-            raise ValueError(f"发现非新模型 Excel，已拒绝参与提取: {path.name}")
-        courses[path.stem] = path
-    return courses
+        if "-" in part:
+            left, right = [x.strip() for x in part.split("-", 1)]
+            start = int(left)
+            end = int(right)
+            if start > end:
+                raise ValueError(f"范围无效: {part}")
+            picked.update(range(start, end + 1))
+        else:
+            picked.add(int(part))
+    invalid = [idx for idx in picked if idx < 1 or idx > count]
+    if invalid:
+        raise ValueError(f"编号超出范围: {invalid}")
+    return sorted(picked)
+
+
+def load_config(path: Path) -> dict:
+    if not path.exists():
+        raise FileNotFoundError(f"配置不存在: {path}")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"配置必须是 JSON 对象: {path}")
+    return data
+
+
+def discover_collections(repo_root: Path, cfg: dict) -> list[CollectionConfig]:
+    raw = cfg.get("collections")
+    if not isinstance(raw, dict) or not raw:
+        raise ValueError("配置缺少 collections。")
+    items: list[CollectionConfig] = []
+    for collection_id, item in raw.items():
+        if not isinstance(item, dict):
+            raise ValueError(f"collections.{collection_id} 必须是对象。")
+        title = normalize_text(item.get("title"))
+        if not title or re.fullmatch(TITLE_RE, title) is None:
+            raise ValueError(f"收集表标题不符合新模型: {collection_id} -> {title}")
+        excel_text = normalize_text(item.get("excel"))
+        if not excel_text:
+            continue
+        excel = Path(excel_text)
+        if not excel.is_absolute():
+            excel = (repo_root / excel).resolve()
+        if not excel.exists():
+            raise FileNotFoundError(f"Excel 不存在: {collection_id} -> {excel}")
+        if excel.stem != title:
+            raise ValueError(f"Excel 文件名必须等于收集表标题: {collection_id} -> {excel.name}")
+        items.append(
+            CollectionConfig(
+                collection_id=str(collection_id),
+                title=title,
+                excel=excel,
+                status=normalize_text(item.get("status")) or "active",
+            )
+        )
+    return sorted(items, key=lambda item: item.collection_id)
 
 
 def discover_labels(excel_path: Path) -> tuple[dict[str, list[str]], pd.DataFrame]:
@@ -73,8 +125,8 @@ def discover_labels(excel_path: Path) -> tuple[dict[str, list[str]], pd.DataFram
     return labels, df
 
 
-def load_published_cutoffs(repo_root: Path, course: str) -> dict[str, pd.Timestamp]:
-    index_path = repo_root / "webapp" / "public" / "data" / f"{sanitize_filename_component(course)}.index.json"
+def load_published_cutoffs(repo_root: Path, collection_id: str) -> dict[str, pd.Timestamp]:
+    index_path = repo_root / "webapp" / "public" / "data" / collection_id / "index.json"
     if not index_path.exists():
         return {}
     data = json.loads(index_path.read_text(encoding="utf-8"))
@@ -108,7 +160,7 @@ def latest_time_for_label(df: pd.DataFrame, label: str) -> pd.Timestamp:
 
 def choose_cutoff_policy(
     *,
-    course: str,
+    item: CollectionConfig,
     labels: list[str],
     labels_df: pd.DataFrame,
     published_cutoffs: dict[str, pd.Timestamp],
@@ -117,9 +169,10 @@ def choose_cutoff_policy(
     for label in labels:
         latest = latest_time_for_label(labels_df, label)
         cutoff = published_cutoffs.get(label)
-        late_rows = int((labels_df[(labels_df["提交序号"].map(normalize_text) == label)]["_record_time"] > cutoff).sum()) if cutoff is not None else 0
+        rows_for_label = labels_df[labels_df["提交序号"].map(normalize_text) == label]
+        late_rows = int((rows_for_label["_record_time"] > cutoff).sum()) if cutoff is not None else 0
         print(
-            f"  {course} | {label}: "
+            f"  {item.collection_id} | {label}: "
             f"已发布截止={format_time(cutoff) or '无'} | Excel最新={format_time(latest)} | 截止后记录={late_rows}"
         )
     default_policy = "keep"
@@ -137,51 +190,25 @@ def choose_cutoff_policy(
     return policy, manual
 
 
-def parse_selection(raw: str, count: int) -> list[int]:
-    text = raw.strip().lower().replace("，", ",").replace("、", ",")
-    if text == "all":
-        return list(range(1, count + 1))
-    picked: set[int] = set()
-    for part in text.split(","):
-        part = part.strip()
-        if not part:
-            continue
-        if "-" in part:
-            left, right = [x.strip() for x in part.split("-", 1)]
-            start = int(left)
-            end = int(right)
-            if start > end:
-                raise ValueError(f"范围无效: {part}")
-            picked.update(range(start, end + 1))
-        else:
-            picked.add(int(part))
-    invalid = [idx for idx in picked if idx < 1 or idx > count]
-    if invalid:
-        raise ValueError(f"编号超出范围: {invalid}")
-    return sorted(picked)
-
-
-def choose_items(repo_root: Path, courses: dict[str, Path]) -> list[PlanItem]:
-    course_names = list(courses.keys())
-    print("\n可选课程列表:")
-    for idx, name in enumerate(course_names, 1):
-        print(f"  {idx}. {name}")
+def choose_items(repo_root: Path, collections: list[CollectionConfig]) -> list[PlanItem]:
+    print("\n可选收集表:")
+    for idx, item in enumerate(collections, 1):
+        print(f"  {idx}. {item.collection_id} | {item.title} | {item.status}")
     while True:
-        raw = input("请选择课程编号（如 1,3 或 all）: ")
+        raw = input("请选择收集表编号（如 1,3 或 all）: ")
         try:
-            course_indices = parse_selection(raw, len(course_names))
-            if course_indices:
+            collection_indices = parse_selection(raw, len(collections))
+            if collection_indices:
                 break
         except Exception as err:
             print(f"输入无效: {err}")
 
     plan: list[PlanItem] = []
-    for course_idx in course_indices:
-        course = course_names[course_idx - 1]
-        excel = courses[course]
-        labels_map, labels_df = discover_labels(excel)
+    for collection_idx in collection_indices:
+        item = collections[collection_idx - 1]
+        labels_map, labels_df = discover_labels(item.excel)
         labels = list(labels_map.keys())
-        print(f"\n选择提交序号: {course}")
+        print(f"\n选择提交序号: {item.collection_id} | {item.title}")
         for idx, label in enumerate(labels, 1):
             print(f"  {idx}. {label} | {', '.join(labels_map[label])}")
         while True:
@@ -194,15 +221,15 @@ def choose_items(repo_root: Path, courses: dict[str, Path]) -> list[PlanItem]:
                 print(f"输入无效: {err}")
         selected_labels = [labels[i - 1] for i in label_indices]
         cutoff_policy, manual_cutoffs = choose_cutoff_policy(
-            course=course,
+            item=item,
             labels=selected_labels,
             labels_df=labels_df,
-            published_cutoffs=load_published_cutoffs(repo_root, course),
+            published_cutoffs=load_published_cutoffs(repo_root, item.collection_id),
         )
         plan.append(
             PlanItem(
-                course=course,
-                excel=excel,
+                collection_id=item.collection_id,
+                title=item.title,
                 labels=selected_labels,
                 cutoff_policy=cutoff_policy,
                 manual_cutoffs=manual_cutoffs,
@@ -225,8 +252,8 @@ def build_extract_cmd(
         str(repo_root / "local" / "extract_homework.py"),
         "--config",
         str(config_path),
-        "--excel",
-        str(item.excel),
+        "--collection-id",
+        item.collection_id,
     ]
     for label in item.labels:
         cmd.extend(["--label", label])
@@ -250,7 +277,7 @@ def run_extracts(
     cleanup_only: bool = False,
 ) -> int:
     for item in plan:
-        print(f"\n开始处理: {item.course} labels={', '.join(item.labels)}")
+        print(f"\n开始处理: {item.collection_id} labels={', '.join(item.labels)}")
         proc = subprocess.run(
             build_extract_cmd(
                 python_exe,
@@ -263,23 +290,23 @@ def run_extracts(
             cwd=repo_root,
         )
         if proc.returncode != 0:
-            print(f"处理失败: {item.course}")
+            print(f"处理失败: {item.collection_id}")
             return proc.returncode
     return 0
 
 
 def prompt_source_cleanup(python_exe: Path, repo_root: Path, config_path: Path, plan: list[PlanItem]) -> int:
-    print("\n源附件清理默认跳过。可选模式: skip / dry-run / apply")
-    raw = input("是否清理企业微信本地同步源附件？[skip/dry-run/apply]: ").strip().lower()
+    print("\n源文件清理默认跳过。可选模式: skip / dry-run / apply")
+    raw = input("是否清理企业微信本地同步源文件？[skip/dry-run/apply]: ").strip().lower()
     if raw in {"", "skip", "s", "n", "no"}:
-        print("已跳过源附件清理。")
+        print("已跳过源文件清理。")
         return 0
     if raw in {"dry-run", "dry", "d"}:
         return run_extracts(python_exe, repo_root, config_path, plan, cleanup_mode="dry-run", cleanup_only=True)
     if raw in {"apply", "a"}:
-        confirm = input("确认删除源附件请输入 APPLY: ").strip()
+        confirm = input("确认删除源文件请输入 APPLY: ").strip()
         if confirm != "APPLY":
-            print("未输入 APPLY，已取消源附件清理。")
+            print("未输入 APPLY，已取消源文件清理。")
             return 0
         return run_extracts(python_exe, repo_root, config_path, plan, cleanup_mode="apply", cleanup_only=True)
     print(f"未知清理模式: {raw}")
@@ -313,7 +340,7 @@ def git_commit_public(repo_root: Path, auto_push: bool) -> None:
 def parse_args() -> argparse.Namespace:
     repo_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description="新模型增量收集交互入口")
-    parser.add_argument("--config", default=str(repo_root / "config" / "local.config.json"))
+    parser.add_argument("--config", default=str(repo_root / "config" / "config.json"))
     parser.add_argument("--no-auto-push", dest="auto_push", action="store_false")
     parser.add_argument("--no-git", action="store_true")
     return parser.parse_args()
@@ -323,15 +350,18 @@ def main() -> int:
     args = parse_args()
     repo_root = Path(__file__).resolve().parents[1]
     config_path = Path(args.config).resolve()
-    courses_dir = repo_root / "config"
-    courses = discover_courses(courses_dir)
-    if not courses:
-        print("未发现新模型 Excel。")
+    if not config_path.exists():
+        fallback = repo_root / "config" / "local.config.json"
+        config_path = fallback if fallback.exists() else config_path
+    cfg = load_config(config_path)
+    collections = discover_collections(repo_root, cfg)
+    if not collections:
+        print("未发现可提取的收集表 Excel。")
         return 1
-    plan = choose_items(repo_root, courses)
+    plan = choose_items(repo_root, collections)
     print("\n执行计划:")
     for item in plan:
-        print(f"- {item.course}: {', '.join(item.labels)} | cutoff={item.cutoff_policy}")
+        print(f"- {item.collection_id}: {', '.join(item.labels)} | cutoff={item.cutoff_policy}")
     if input("确认执行？[y/N]: ").strip().lower() != "y":
         print("已取消。")
         return 1
