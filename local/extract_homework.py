@@ -126,6 +126,27 @@ def _extract_student_id_from_filename(filename: str) -> str:
     return match.group(0) if match else ""
 
 
+def _count_archive_status(manifest: dict[str, Any]) -> dict[str, int]:
+    active = 0
+    missing = 0
+    invalid = 0
+    for entry in manifest.get("entries", {}).values():
+        if not isinstance(entry, dict):
+            continue
+        versions = entry.get("versions", [])
+        if not versions:
+            continue
+        latest = versions[-1]
+        status = str(latest.get("状态") or latest.get("status", "")).strip()
+        if status == "active":
+            active += 1
+        elif status == "missing":
+            missing += 1
+        elif status == "invalid":
+            invalid += 1
+    return {"active": active, "missing": missing, "invalid": invalid}
+
+
 def check_unknown_students(
     df: pd.DataFrame,
     students_by_name: dict[str, dict[str, str]],
@@ -302,6 +323,9 @@ def process_collection(
         write_submission_reports(collection_out_dir, label, stat)
         zip_paths.append(str(create_submission_zip(collection_out_dir, label, manifest, None)))
 
+    archive_counts = _count_archive_status(manifest)
+    print(f"\n  归档状态: active={archive_counts['active']} missing={archive_counts['missing']} invalid={archive_counts['invalid']}")
+
     summary = {
         "收集表ID": collection_id,
         "标题": meta["标题"],
@@ -313,6 +337,7 @@ def process_collection(
         "提交序号列表": selected_labels,
         "统计文件目录": str(collection_out_dir / "stats"),
         "压缩包列表": zip_paths,
+        "归档统计": archive_counts,
     }
     (collection_out_dir / "collection_summary.json").write_text(dump_json(summary), encoding="utf-8")
 
