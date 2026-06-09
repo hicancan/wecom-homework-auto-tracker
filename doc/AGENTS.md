@@ -185,5 +185,48 @@ uv run pytest
 
 ### 结论
 **7 个文件无法从任何本地来源恢复。唯一解决方式是让陈嘉豪、郭洋重新提交。**
-3. **实验目前只布置到第 3 次**：收集时只跑 1-3，不要跑 4-6
-4. **AI 导论实验尚未排查**：提交内容是 `企业微信用户` 而非标准格式，需要确认后修复并收集
+
+## 9. 系统架构分析
+
+### 归档分层
+
+```
+out/collections/<collection_id>/
+├── archive_manifest.json     ← 权威真相源，所有版本的索引
+├── files/
+│   ├── _versions/            ← 不可变版本仓库（审计用）
+│   │   └── <entry_token>/<version_token>/<filename>
+│   └── current/              ← 当前激活版本快照
+│       └── <提交序号>/<提交内容>/<班级>/<学号姓名.ext>
+├── history/                  ← 被新版本替换的旧文件（学生重交时移入）
+├── zip/                      ← 每次收集重建（--no-late 过滤补交）
+└── stats/                    ← 统计报告副本（与 webapp/public/data/ 同步）
+```
+
+三层不可变：`_versions` + `history` + `archive_manifest.json`（永久存档，永不丢失）
+三层可重建：`current` + `zip` + `stats`（每次 `extract_homework.py` 重建）
+
+### 设计评价
+
+**做得好的：**
+- `_versions` 不可变 + SHA256 + 时间戳 → 审计追责无敌
+- `archive_manifest.json` 是唯一真相源 → WeDrive 源删了不影响统计
+- `history/` 只增不删 → 学生重交旧文件不丢
+- ZIP 每次重建 → `--no-late` 开关不影响归档，逻辑干净
+- `current/` 是 `_versions/` 的视图 → 快速定位最新版本
+
+**未来可改进（非紧急）：**
+1. `current/` 是 `_versions/` 的副本，可用硬链接省空间
+2. 缺少 `--verify` 命令校验 SHA256 完整性
+3. `files/` 下有旧结构残留（迁移遗留）
+
+### 提交序号处理流程
+
+```
+Excel → merge_incremental_archive() [不过滤，全量归档到 _versions/ + current/]
+     → make_submission_stat() [按 cutoff 分类统计]
+     → create_submission_zip() [--no-late 时仅打包截止内文件]
+     → write_collection_web_data() [发布到 webapp/public/]
+```
+
+边界情况：截止后提交的唯一无效后缀文件 → `--no-late` 时标为未交（正确，截止后不管后缀）。
