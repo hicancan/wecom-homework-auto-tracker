@@ -4,13 +4,8 @@
   "attachments": "",
   "students": "config/students.json",
   "other_students": "config/other_students.json",
-  "allowed_submission_extensions": {
-    "default": [".doc", ".docx", ".pdf"],
-    "人工智能导论及其Python应用实践实验B240402": [".doc", ".docx", ".pdf", ".zip"]
-  },
   "output_filename_templates": {
-    "default": "{student_no}{student_name}{ext}",
-    "人工智能导论及其Python应用实践实验B240402": "{student_no}-{student_name}-实验报告{homework_order}{ext}"
+    "default": "{student_no}{student_name}{ext}"
   },
   "zip_enabled": true,
   "zip_name_templates": {
@@ -20,7 +15,7 @@
   "web_data_root": "webapp/public/data",
   "course_index": "webapp/public/courses.json",
   "course_classes": {
-    "示例课程名": {
+    "示例主题[B240401-03][大二下]": {
       "classes": [
         "B240401",
         "B240402"

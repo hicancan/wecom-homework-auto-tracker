@@ -12,6 +12,12 @@ if not exist "%RUNNER_PY%" (
   exit /b 1
 )
 
+where uv >nul 2>nul
+if %ERRORLEVEL%==0 (
+  uv run python "%RUNNER_PY%" %*
+  goto :after_run
+)
+
 set "PYTHON_EXE=%REPO_ROOT%\.venv\Scripts\python.exe"
 if not exist "%PYTHON_EXE%" (
   where python >nul 2>nul
@@ -26,6 +32,7 @@ if not exist "%PYTHON_EXE%" (
 
 "%PYTHON_EXE%" "%RUNNER_PY%" %*
 
+:after_run
 set "EXIT_CODE=%ERRORLEVEL%"
 echo.
 if not "%EXIT_CODE%"=="0" (

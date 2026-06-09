@@ -1,6 +1,10 @@
 export type CourseItem = {
   课程: string
   数据文件: string
+  主题: string
+  对象: string
+  周期?: string
+  状态: 'active' | 'archived'
 }
 
 export type CourseIndex = {

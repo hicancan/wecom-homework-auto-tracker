@@ -3,21 +3,25 @@
 @layer base {
   :root {
     font-family: "Noto Sans SC", "Microsoft YaHei", "PingFang SC", sans-serif;
-    color: #e2e8f0;
-    background-color: #020617;
+    color: #0f172a;
+    background-color: #f1f5f9;
     font-synthesis: none;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 
+  html,
+  #root {
+    min-height: 100%;
+    background: #f1f5f9;
+  }
+
   body {
     margin: 0;
     min-width: 320px;
-    background:
-      radial-gradient(circle at 10% 20%, rgba(34, 211, 238, 0.2), transparent 40%),
-      radial-gradient(circle at 90% 10%, rgba(16, 185, 129, 0.2), transparent 35%),
-      #020617;
+    min-height: 100vh;
+    background: #f1f5f9;
   }
 
   * {

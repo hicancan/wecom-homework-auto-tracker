@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { type CourseIndex, type CourseManifest, loadCourseIndex } from './courseIndexLoader'
 
@@ -54,19 +54,35 @@ function Home() {
     manifestData?.更新时间 ||
     indexData?.更新时间 ||
     '加载中...'
-  const courses = indexData?.课程列表 || []
+  const courses = useMemo(() => indexData?.课程列表 || [], [indexData])
+  const groupedCourses = useMemo(() => {
+    const groups = new Map<string, typeof courses>()
+    for (const course of courses) {
+      const groupName = course.周期?.trim() || '未分组'
+      const current = groups.get(groupName) || []
+      current.push(course)
+      groups.set(groupName, current)
+    }
+    return Array.from(groups.entries()).map(([period, items]) => ({
+      period,
+      items: [...items].sort((a, b) => {
+        if (a.状态 !== b.状态) return a.状态 === 'active' ? -1 : 1
+        return a.主题.localeCompare(b.主题, 'zh-Hans-CN')
+      }),
+    }))
+  }, [courses])
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_20%_10%,#dbeafe_0%,#f8fafc_45%,#ecfeff_100%)] text-slate-900">
+    <main className="min-h-screen bg-slate-100 text-slate-900">
       <div className="mx-auto flex min-h-screen max-w-5xl flex-col px-4 py-12 md:px-8">
-        <header className="rounded-3xl border border-sky-100 bg-white/90 p-6 shadow-[0_30px_80px_rgba(14,116,144,0.12)] backdrop-blur md:p-8">
+        <header className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm md:p-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h1 className="text-2xl font-bold md:text-4xl">课程作业追踪看板</h1>
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-end">
               <button
                 type="button"
                 onClick={handleShareHomeLink}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-teal-200 bg-teal-50 px-3 py-2 text-sm font-medium text-teal-800 transition hover:bg-teal-100 sm:w-auto"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-teal-200 bg-teal-50 px-3 py-2 text-sm font-medium text-teal-800 transition hover:bg-teal-100 sm:w-auto"
               >
                 <svg
                   viewBox="0 0 24 24"
@@ -88,7 +104,7 @@ function Home() {
                 href="https://github.com/hicancan/wecom-homework-auto-tracker"
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 sm:w-auto"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 sm:w-auto"
               >
                 <svg
                   viewBox="0 0 24 24"
@@ -111,23 +127,52 @@ function Home() {
         </header>
 
         {error && (
-          <section className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+          <section className="mt-6 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
             数据加载失败：{error}
           </section>
         )}
 
-        <section className="mt-6 grid gap-4 md:grid-cols-2">
-          {courses.map((item) => (
-            <Link
-              key={item.课程}
-              to={`/course/${encodeURIComponent(item.课程)}`}
-              className="group rounded-2xl border border-sky-100 bg-white/95 p-5 shadow-[0_20px_45px_rgba(14,165,233,0.1)] transition hover:-translate-y-0.5 hover:shadow-[0_25px_50px_rgba(14,165,233,0.16)]"
-            >
-              <p className="text-xs uppercase tracking-[0.24em] text-sky-700">Course</p>
-              <h2 className="mt-2 text-lg font-semibold text-slate-900">{item.课程}</h2>
-              <p className="mt-3 text-sm text-slate-500">进入该课程的作业提交看板</p>
-              <p className="mt-4 text-sm font-medium text-sky-700 group-hover:text-sky-800">打开看板</p>
-            </Link>
+        <section className="mt-6 space-y-6">
+          {groupedCourses.map((group) => (
+            <div key={group.period}>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h2 className="text-base font-semibold text-slate-800">{group.period}</h2>
+                <span className="text-xs text-slate-500">
+                  进行中 {group.items.filter((item) => item.状态 === 'active').length} / 归档{' '}
+                  {group.items.filter((item) => item.状态 === 'archived').length}
+                </span>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                {group.items.map((item) => {
+                  const archived = item.状态 === 'archived'
+                  return (
+                    <Link
+                      key={item.课程}
+                      to={`/course/${encodeURIComponent(item.课程)}`}
+                      className={`group rounded-lg border bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
+                        archived ? 'border-slate-200 opacity-80 hover:opacity-100' : 'border-sky-200'
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="text-xs font-medium text-slate-500">{item.对象}</p>
+                          <h3 className="mt-1 text-lg font-semibold text-slate-900">{item.主题}</h3>
+                        </div>
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                            archived ? 'bg-slate-100 text-slate-600' : 'bg-emerald-50 text-emerald-700'
+                          }`}
+                        >
+                          {archived ? '已归档' : '进行中'}
+                        </span>
+                      </div>
+                      <p className="mt-3 break-all text-xs text-slate-500">{item.课程}</p>
+                      <p className="mt-4 text-sm font-medium text-sky-700 group-hover:text-sky-800">打开看板</p>
+                    </Link>
+                  )
+                })}
+              </div>
+            </div>
           ))}
         </section>
       </div>
