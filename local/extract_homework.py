@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 from typing import Any
 
@@ -117,6 +118,64 @@ def pick_excel(args: argparse.Namespace, repo_root: Path, cfg: dict[str, Any]) -
     raise ValueError("检测到多份新模型 Excel，请使用 --collection-id 或 --excel 指定。")
 
 
+def _extract_student_id_from_filename(filename: str) -> str:
+    """Try to extract a student ID (e.g. B23110622) from an uploaded filename."""
+    if not filename:
+        return ""
+    match = re.search(r"[A-Z]\d{8}", str(filename))
+    return match.group(0) if match else ""
+
+
+def check_unknown_students(
+    df: pd.DataFrame,
+    students_by_name: dict[str, dict[str, str]],
+    other_students_by_name: dict[str, dict[str, str]],
+) -> list[dict[str, Any]]:
+    all_names = set(students_by_name) | set(other_students_by_name)
+    df_known = df[df["_name_norm"].isin(all_names)]
+    unknown_names = sorted(set(df["_name_norm"].unique()) - all_names)
+    if not unknown_names:
+        return []
+
+    report: list[dict[str, Any]] = []
+    for name in unknown_names:
+        rows = df[df["_name_norm"] == name]
+        filenames = rows["_uploaded_filename"].dropna().astype(str).unique().tolist()
+        ids = list(dict.fromkeys(
+            sid for fn in filenames if (sid := _extract_student_id_from_filename(fn))
+        ))
+        report.append({
+            "姓名": name,
+            "推测学号": ids[0] if len(ids) == 1 else (ids if ids else "未检测到"),
+            "提交序号": sorted(set(rows["_submission_label"].tolist())),
+            "提交内容": sorted(set(rows["_content_label"].tolist())),
+            "记录数": int(len(rows)),
+        })
+    return report
+
+
+def _format_unknown_report(report: list[dict[str, Any]]) -> str:
+    lines = [
+        f"\n{'='*60}",
+        f"  [ERROR] 发现 {len(report)} 位不在学生名单中的填写人",
+        f"{'='*60}",
+    ]
+    for item in report:
+        ids = item["推测学号"]
+        if isinstance(ids, list):
+            ids = ", ".join(ids)
+        lines.append(f"\n  姓名: {item['姓名']}")
+        lines.append(f"  推测学号: {ids}")
+        lines.append(f"  提交序号: {', '.join(item['提交序号'])}")
+        lines.append(f"  提交内容: {', '.join(item['提交内容'])}")
+        lines.append(f"  记录数: {item['记录数']}")
+    lines.append(f"\n  解决方法:")
+    lines.append(f"    1. 将学生加入 config/other_students.json")
+    lines.append(f"    2. 或使用 --skip-unknown 跳过未知学生继续收集")
+    lines.append(f"{'='*60}\n")
+    return "\n".join(lines)
+
+
 def process_collection(
     *,
     collection_id: str,
@@ -129,6 +188,7 @@ def process_collection(
     manual_cutoffs: dict[str, pd.Timestamp],
     cleanup_mode: str,
     cleanup_only: bool,
+    skip_unknown: bool,
     configured_meta: dict[str, Any],
 ) -> dict[str, Any]:
     df, parsed_meta, columns = load_collection_excel(excel_path)
@@ -161,6 +221,16 @@ def process_collection(
     else:
         target_classes = resolve_target_classes(meta, df, students_by_name)
     students_by_class = scope_students_by_classes(students_by_class_all, target_classes)
+
+    # ---- FAIL-FAST: check for unknown students BEFORE any processing ----
+    unknown_report = check_unknown_students(df, students_by_name, other_students_by_name)
+    if unknown_report:
+        report_text = _format_unknown_report(unknown_report)
+        if not skip_unknown:
+            print(report_text)
+            raise SystemExit(1)
+        print(report_text)
+        print("  [WARN] --skip-unknown 已启用，跳过以上学生继续收集...\n")
 
     attachments_root = resolve_path(cfg.get("attachments_root", ""), repo_root)
     attachments_dir = find_attachments_dir(meta["标题"], attachments_root, attachments_override)
@@ -300,6 +370,7 @@ def parse_args() -> argparse.Namespace:
         help="按选中提交序号清理企业微信同步源文件，默认不清理",
     )
     parser.add_argument("--cleanup-only", action="store_true", help="仅执行源文件清理，不更新归档和 web 数据")
+    parser.add_argument("--skip-unknown", action="store_true", help="跳过不在名单中的填写人，不触发 fail-fast")
     parser.add_argument("--list-collections", action="store_true")
     parser.add_argument("--list-submission-labels", action="store_true")
     return parser.parse_args()
@@ -335,6 +406,7 @@ def main() -> None:
         manual_cutoffs=parse_manual_cutoffs(args.cutoff),
         cleanup_mode=args.cleanup_source_attachments,
         cleanup_only=args.cleanup_only,
+        skip_unknown=args.skip_unknown,
         configured_meta=configured_meta,
     )
     print("处理完成:")
