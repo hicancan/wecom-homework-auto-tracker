@@ -135,6 +135,9 @@ export function CollectionPage() {
   }
 
   function handleCollectionChange(nextId: string) {
+    setCollectionIndex(null)
+    setSubmissionData(null)
+    setPageError('')
     navigate(`/collection/${encodeURIComponent(nextId)}`)
   }
 
