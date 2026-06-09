@@ -93,10 +93,12 @@ export function CollectionPage() {
   useEffect(() => {
     if (!selectedCollection || !collectionIndex || hasLegacySubmissionParam) return
     const latestSeq = collectionIndex.提交序号列表[collectionIndex.提交序号列表.length - 1]?.提交序号ID
-    if (!routeSeq && latestSeq) {
+    if (!latestSeq) return
+    const needRedirect = !routeSeq || !submissionMap.has(routeSeq)
+    if (needRedirect) {
       navigate(`/collection/${encodeURIComponent(selectedCollection.收集表ID)}?seq=${encodeURIComponent(latestSeq)}`, { replace: true })
     }
-  }, [collectionIndex, hasLegacySubmissionParam, navigate, routeSeq, selectedCollection])
+  }, [collectionIndex, hasLegacySubmissionParam, navigate, routeSeq, selectedCollection, submissionMap])
 
   useEffect(() => {
     if (!selectedRef || hasLegacySubmissionParam) {
