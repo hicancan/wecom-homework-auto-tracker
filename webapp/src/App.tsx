@@ -51,6 +51,7 @@ type HomeworkStat = {
   更新时间?: string
   最后部署时间?: string
   最后提交时间?: string
+  统计截止时间?: string
   附件缺失?: IssueSummary
   无效附件?: IssueSummary
   其他已交名单?: string[]
@@ -753,9 +754,11 @@ function App() {
               <div className="rounded-xl border border-sky-100 bg-sky-50/70 p-4">
                 <p className="flex items-center gap-2 text-xs text-slate-500">
                   <AppIcon name="clock" className="h-4 w-4 text-sky-700" />
-                  当前提交序号最后提交时间
+                  当前提交序号统计截止时间
                 </p>
-                <p className="mt-1 text-xl font-semibold tracking-tight text-sky-700">{selected?.最后提交时间 || '-'}</p>
+                <p className="mt-1 text-xl font-semibold tracking-tight text-sky-700">
+                  {selected?.统计截止时间 || selected?.最后提交时间 || '-'}
+                </p>
               </div>
               <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
                 <p className="flex items-center gap-2 text-xs text-slate-500">

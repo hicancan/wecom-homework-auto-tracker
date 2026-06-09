@@ -142,6 +142,17 @@ def parse_datetime_text(value: Any) -> pd.Timestamp | None:
     return ts
 
 
+def entry_time_within_cutoff(entry: dict[str, Any], cutoff: pd.Timestamp | None) -> bool:
+    if cutoff is None:
+        return True
+    if entry.get("本地归档基线") or "legacy archive baseline" in str(entry.get("备注", "")):
+        return True
+    ts = parse_datetime_text(entry.get("提交时间"))
+    if ts is None:
+        return True
+    return ts <= cutoff
+
+
 def hash_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as f:
@@ -598,11 +609,23 @@ def merge_incremental_archive(
     duplicate_lookup: dict[str, list[str]],
     students_by_name: dict[str, dict[str, str]],
     other_students_by_name: dict[str, dict[str, str]],
+    submission_cutoffs: dict[str, pd.Timestamp],
 ) -> dict[str, Any]:
     archive_path = course_out_dir / "archive_manifest.json"
     manifest = load_archive_manifest(archive_path, meta)
     selected_set = set(selected_labels)
-    latest = latest_rows_by_key(df[df["_submission_label"].isin(selected_set)])
+    selected_df = df[df["_submission_label"].isin(selected_set)].copy()
+    if submission_cutoffs:
+        selected_df = selected_df[
+            selected_df.apply(
+                lambda row: (
+                    row["_submission_label"] not in submission_cutoffs
+                    or row["_record_time"] <= submission_cutoffs[row["_submission_label"]]
+                ),
+                axis=1,
+            )
+        ]
+    latest = latest_rows_by_key(selected_df)
 
     for _, row in latest.iterrows():
         name_norm = row["_name_norm"]
@@ -715,11 +738,37 @@ def active_entry_for(
     student_no: str,
     submission_label: str,
     content_label: str,
+    cutoff: pd.Timestamp | None = None,
 ) -> dict[str, Any] | None:
     entry = manifest.get("entries", {}).get(archive_entry_id(student_no, submission_label, content_label))
-    if isinstance(entry, dict):
+    if isinstance(entry, dict) and entry_time_within_cutoff(entry, cutoff):
         return entry
     return None
+
+
+def load_existing_submission_cutoffs(web_data_root: Path, meta: dict[str, str]) -> dict[str, pd.Timestamp]:
+    course_slug = sanitize_filename_component(meta["课程"])
+    index_path = web_data_root / f"{course_slug}.index.json"
+    if not index_path.exists():
+        return {}
+    index_data = read_json_object(index_path)
+    cutoffs: dict[str, pd.Timestamp] = {}
+    for item in index_data.get("作业列表", []):
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("作业", "")).strip()
+        data_file = str(item.get("数据文件", "")).strip()
+        if not label or not data_file:
+            continue
+        relative = data_file.removeprefix("data/").replace("/", "\\")
+        stat_path = web_data_root / relative
+        if not stat_path.exists():
+            continue
+        stat = read_json_object(stat_path)
+        cutoff = parse_datetime_text(stat.get("统计截止时间") or stat.get("最后提交时间"))
+        if cutoff is not None:
+            cutoffs[label] = cutoff
+    return cutoffs
 
 
 def build_missing_attachment_summary(stat: dict[str, Any]) -> dict[str, Any]:
@@ -761,8 +810,11 @@ def make_submission_stat(
     content_labels: list[str],
     students_by_class: dict[str, list[dict[str, str]]],
     other_students_by_name: dict[str, dict[str, str]],
+    cutoff: pd.Timestamp | None,
 ) -> dict[str, Any]:
     df_submission = df[df["_submission_label"] == submission_label]
+    if cutoff is not None:
+        df_submission = df_submission[df_submission["_record_time"] <= cutoff]
     latest_record_time = format_datetime(df_submission["_record_time"].max()) if not df_submission.empty else ""
 
     content_stats: dict[str, Any] = {}
@@ -775,6 +827,7 @@ def make_submission_stat(
         "状态": "active",
         "提交内容列表": content_labels,
         "最后提交时间": "",
+        "统计截止时间": format_datetime(cutoff) if cutoff is not None else "",
         "最后收集记录时间": latest_record_time,
         "统计生成时间": now_text(),
         "总班级数": len(students_by_class),
@@ -802,7 +855,7 @@ def make_submission_stat(
             content_missing: list[str] = []
             content_invalid: list[str] = []
             for student in students:
-                entry = active_entry_for(manifest, student["学号"], submission_label, content_label)
+                entry = active_entry_for(manifest, student["学号"], submission_label, content_label, cutoff)
                 if entry and entry.get("状态") == "active":
                     content_submitted.append(student["学号"])
                     ts = parse_datetime_text(entry.get("提交时间"))
@@ -830,7 +883,10 @@ def make_submission_stat(
             }
 
         for student in students:
-            entries = [active_entry_for(manifest, student["学号"], submission_label, content_label) for content_label in content_labels]
+            entries = [
+                active_entry_for(manifest, student["学号"], submission_label, content_label, cutoff)
+                for content_label in content_labels
+            ]
             if entries and all(entry and entry.get("状态") == "active" for entry in entries):
                 complete_students.append(student["学号"])
             else:
@@ -859,7 +915,10 @@ def make_submission_stat(
     other_missing: set[str] = set()
     other_invalid: set[str] = set()
     for student in other_students_by_name.values():
-        entries = [active_entry_for(manifest, student["学号"], submission_label, content_label) for content_label in content_labels]
+        entries = [
+            active_entry_for(manifest, student["学号"], submission_label, content_label, cutoff)
+            for content_label in content_labels
+        ]
         if entries and all(entry and entry.get("状态") == "active" for entry in entries):
             other_submitted.append(student["学号"])
             for entry in entries:
@@ -894,22 +953,36 @@ def make_submission_stat(
     return stat
 
 
-def active_entries_for_submission(manifest: dict[str, Any], submission_label: str) -> list[dict[str, Any]]:
+def active_entries_for_submission(
+    manifest: dict[str, Any],
+    submission_label: str,
+    cutoff: pd.Timestamp | None = None,
+) -> list[dict[str, Any]]:
     entries = []
     for entry in manifest.get("entries", {}).values():
-        if isinstance(entry, dict) and entry.get("提交序号") == submission_label and entry.get("状态") == "active":
+        if (
+            isinstance(entry, dict)
+            and entry.get("提交序号") == submission_label
+            and entry.get("状态") == "active"
+            and entry_time_within_cutoff(entry, cutoff)
+        ):
             entries.append(entry)
     return sorted(entries, key=lambda item: (str(item.get("提交内容名", "")), str(item.get("班级", "")), str(item.get("学号", ""))))
 
 
-def create_submission_zip(course_out_dir: Path, submission_label: str, manifest: dict[str, Any]) -> Path:
+def create_submission_zip(
+    course_out_dir: Path,
+    submission_label: str,
+    manifest: dict[str, Any],
+    cutoff: pd.Timestamp | None = None,
+) -> Path:
     zip_dir = course_out_dir / "zip"
     zip_dir.mkdir(parents=True, exist_ok=True)
     zip_path = zip_dir / f"{sanitize_filename_component(submission_label)}.zip"
     if zip_path.exists():
         zip_path.unlink()
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for entry in active_entries_for_submission(manifest, submission_label):
+        for entry in active_entries_for_submission(manifest, submission_label, cutoff):
             rel = str(entry.get("文件相对路径", "")).strip()
             if not rel:
                 continue
@@ -1067,6 +1140,7 @@ def process_collection(
     course_index_path = resolve_path(cfg.get("course_index", "webapp/public/courses.json"), repo_root)
     course_out_dir = out_root / meta["课程"]
     course_out_dir.mkdir(parents=True, exist_ok=True)
+    published_cutoffs = load_existing_submission_cutoffs(web_data_root, meta)
 
     if cleanup_only:
         if cleanup_mode == "off":
@@ -1093,12 +1167,19 @@ def process_collection(
         duplicate_lookup=duplicate_lookup,
         students_by_name=students_by_name,
         other_students_by_name=other_students_by_name,
+        submission_cutoffs=published_cutoffs,
     )
 
     stats: dict[str, dict[str, Any]] = {}
     zip_paths: list[str] = []
     for label in selected_labels:
-        content_labels = sorted(dict.fromkeys(df[df["_submission_label"] == label]["_content_label"].tolist()))
+        label_rows = df[df["_submission_label"] == label]
+        cutoff = published_cutoffs.get(label)
+        if cutoff is not None:
+            label_rows = label_rows[label_rows["_record_time"] <= cutoff]
+        content_labels = sorted(dict.fromkeys(label_rows["_content_label"].tolist()))
+        if not content_labels:
+            content_labels = sorted(dict.fromkeys(df[df["_submission_label"] == label]["_content_label"].tolist()))
         stat = make_submission_stat(
             df=df,
             columns=columns,
@@ -1108,10 +1189,11 @@ def process_collection(
             content_labels=content_labels,
             students_by_class=students_by_class,
             other_students_by_name=other_students_by_name,
+            cutoff=cutoff,
         )
         stats[label] = stat
         write_submission_reports(course_out_dir, label, stat)
-        zip_paths.append(str(create_submission_zip(course_out_dir, label, manifest)))
+        zip_paths.append(str(create_submission_zip(course_out_dir, label, manifest, cutoff)))
 
     summary = {
         "课程": meta["课程"],
