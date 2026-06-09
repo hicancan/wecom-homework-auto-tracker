@@ -22,15 +22,8 @@ export function CollectionPage() {
   const [submissionData, setSubmissionData] = useState<SubmissionStat | null>(null)
   const [rootError, setRootError] = useState('')
   const [pageError, setPageError] = useState('')
-  const [shareFeedback, setShareFeedback] = useState('')
   const hasLegacySubmissionParam = searchParams.has('hw')
   const routeSeq = searchParams.get('seq') || ''
-
-  useEffect(() => {
-    if (!shareFeedback) return
-    const timer = window.setTimeout(() => setShareFeedback(''), 2200)
-    return () => window.clearTimeout(timer)
-  }, [shareFeedback])
 
   useEffect(() => {
     let active = true
@@ -127,14 +120,16 @@ export function CollectionPage() {
     }
   }, [hasLegacySubmissionParam, manifestData?.version, publicBase, selectedRef])
 
+  const [shareLabel, setShareLabel] = useState('分享主页')
   async function handleShareLink() {
     try {
       if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable')
       await navigator.clipboard.writeText(window.location.href)
-      setShareFeedback('当前链接已复制')
+      setShareLabel('已复制!')
     } catch {
-      setShareFeedback('复制失败，请手动复制当前链接')
+      setShareLabel('复制失败')
     }
+    window.setTimeout(() => setShareLabel('分享主页'), 1800)
   }
 
   function handleCollectionChange(nextId: string) {
@@ -198,16 +193,13 @@ export function CollectionPage() {
               <p className="mt-3 text-sm text-slate-500">网页最后部署时间： {deployTime}</p>
             </div>
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-start">
-              <div className="flex flex-col items-start">
-                <button
-                  type="button"
-                  onClick={handleShareLink}
-                  className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-semibold text-sky-800 hover:bg-sky-100"
-                >
-                  分享主页
-                </button>
-                {shareFeedback && <p className="mt-1 text-xs text-teal-700">{shareFeedback}</p>}
-              </div>
+              <button
+                type="button"
+                onClick={handleShareLink}
+                className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-semibold text-sky-800 transition-colors hover:bg-sky-100"
+              >
+                {shareLabel}
+              </button>
               <Link className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-center text-sm font-semibold text-emerald-800 hover:bg-emerald-100" to="/">
                 返回主页
               </Link>
