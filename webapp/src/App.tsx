@@ -33,6 +33,12 @@ type ContentStatSummary = {
   提交率: number
 }
 
+type IssueSummary = {
+  总人数: number
+  班级统计?: Record<string, string[]>
+  同步提示?: string
+}
+
 type HomeworkStat = {
   作业: string
   课程: string
@@ -45,6 +51,8 @@ type HomeworkStat = {
   更新时间?: string
   最后部署时间?: string
   最后提交时间?: string
+  附件缺失?: IssueSummary
+  无效附件?: IssueSummary
   其他已交名单?: string[]
   汇总?: {
     应交总人数: number
@@ -55,6 +63,14 @@ type HomeworkStat = {
     无效附件总人数?: number
   }
   班级统计: Record<string, ClassStat>
+}
+
+type IssueSection = {
+  title: string
+  count: number
+  description: string
+  classMap: Record<string, string[]>
+  tone: 'amber' | 'rose'
 }
 
 type CourseHomeworkRef = {
@@ -511,6 +527,35 @@ function App() {
     return selected.其他已交名单.map((studentNo) => extractStudentNo(studentNo))
   }, [selected])
 
+  const issueSections = useMemo(() => {
+    if (!selected) return [] as IssueSection[]
+    const sections: IssueSection[] = []
+    const missingAttachment = selected.附件缺失
+    const invalidAttachment = selected.无效附件
+
+    if ((missingAttachment?.总人数 || 0) > 0) {
+      sections.push({
+        title: '本地附件缺失',
+        count: missingAttachment?.总人数 || 0,
+        description: 'Excel 有提交记录，但本地同步目录和本地归档中没有找到这个键对应的附件，因此不计入已交。',
+        classMap: missingAttachment?.班级统计 || {},
+        tone: 'amber',
+      })
+    }
+
+    if ((invalidAttachment?.总人数 || 0) > 0) {
+      sections.push({
+        title: '无效附件',
+        count: invalidAttachment?.总人数 || 0,
+        description: '最新上传文件的后缀不符合“提交内容”括号内允许的后缀契约，因此不计入已交。',
+        classMap: invalidAttachment?.班级统计 || {},
+        tone: 'rose',
+      })
+    }
+
+    return sections
+  }, [selected])
+
   const aggregate = useMemo(() => {
     return classEntries.reduce(
       (acc, [, stat]) => {
@@ -689,8 +734,8 @@ function App() {
                         <p className="mt-1 text-xs text-slate-500">
                           {[
                             selectedContentList.length > 1 ? `已交 ${summary.已交人数} / 应交 ${summary.应交人数}` : '',
-                            summary.无效附件人数 ? `无效 ${summary.无效附件人数}` : '',
-                            summary.附件缺失人数 ? `附件缺失 ${summary.附件缺失人数}` : '',
+                            summary.无效附件人数 ? `无效附件 ${summary.无效附件人数} 人` : '',
+                            summary.附件缺失人数 ? `本地附件缺失 ${summary.附件缺失人数} 人` : '',
                           ]
                             .filter(Boolean)
                             .join('，')}
@@ -755,6 +800,51 @@ function App() {
         {routeError && (
           <section className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
             路由参数错误：{routeError}
+          </section>
+        )}
+
+        {!!issueSections.length && (
+          <section className="mt-6 grid gap-4 md:grid-cols-2">
+            {issueSections.map((section) => {
+              const isMissing = section.tone === 'amber'
+              const panelClass = isMissing
+                ? 'border-amber-200 bg-amber-50 text-amber-900'
+                : 'border-rose-200 bg-rose-50 text-rose-900'
+              const badgeClass = isMissing ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'
+              const itemClass = isMissing
+                ? 'border-amber-200 bg-white/70 text-amber-900'
+                : 'border-rose-200 bg-white/70 text-rose-900'
+              const classEntriesForIssue = Object.entries(section.classMap).filter(([, students]) => students.length)
+
+              return (
+                <article key={section.title} className={`rounded-2xl border p-4 text-sm shadow-sm ${panelClass}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h2 className="flex items-center gap-2 text-base font-semibold">
+                      <AppIcon name="warn" className="h-4 w-4" />
+                      {section.title}
+                    </h2>
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${badgeClass}`}>
+                      {section.count} 人
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs leading-5 opacity-90">{section.description}</p>
+                  <div className="mt-3 space-y-2">
+                    {classEntriesForIssue.map(([className, students]) => (
+                      <div key={className} className="rounded-xl border border-current/10 bg-white/40 p-2">
+                        <p className="mb-2 text-xs font-semibold">{className}</p>
+                        <ul className="grid grid-cols-[repeat(auto-fit,minmax(110px,1fr))] gap-2">
+                          {students.map((student) => (
+                            <li key={student} className={`rounded-lg border px-2 py-1 text-center text-xs ${itemClass}`}>
+                              {extractStudentNo(student)}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              )
+            })}
           </section>
         )}
 

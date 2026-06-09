@@ -74,7 +74,7 @@ function Home() {
 
   return (
     <main className="min-h-screen bg-slate-100 text-slate-900">
-      <div className="mx-auto flex min-h-screen max-w-5xl flex-col px-4 py-12 md:px-8">
+      <div className="mx-auto flex min-h-screen max-w-[1600px] flex-col px-4 py-12 md:px-8">
         <header className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm md:p-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h1 className="text-2xl font-bold md:text-4xl">课程作业追踪看板</h1>
@@ -142,7 +142,7 @@ function Home() {
                   {group.items.filter((item) => item.状态 === 'archived').length}
                 </span>
               </div>
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                 {group.items.map((item) => {
                   const archived = item.状态 === 'archived'
                   return (
@@ -166,7 +166,6 @@ function Home() {
                           {archived ? '已归档' : '进行中'}
                         </span>
                       </div>
-                      <p className="mt-3 break-all text-xs text-slate-500">{item.课程}</p>
                       <p className="mt-4 text-sm font-medium text-sky-700 group-hover:text-sky-800">打开看板</p>
                     </Link>
                   )
