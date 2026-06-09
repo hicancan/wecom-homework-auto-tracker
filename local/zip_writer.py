@@ -7,13 +7,15 @@ from typing import Any
 import pandas as pd
 
 from archive import merged_entry_version, version_sort_key
-from contract import dump_json, entry_time_within_cutoff, sanitize_filename_component
+from contract import dump_json, entry_time_in_publication_window, sanitize_filename_component
 
 
 def active_entries_for_submission(
     manifest: dict[str, Any],
     submission_label: str,
     cutoff: pd.Timestamp | None = None,
+    makeup_window_start: pd.Timestamp | None = None,
+    makeup_window_end: pd.Timestamp | None = None,
 ) -> list[dict[str, Any]]:
     entries = []
     for entry in manifest.get("entries", {}).values():
@@ -22,14 +24,15 @@ def active_entries_for_submission(
         versions = [
             version
             for version in entry.get("versions", [])
-            if isinstance(version, dict) and entry_time_within_cutoff(version, cutoff)
+            if isinstance(version, dict)
+            and entry_time_in_publication_window(version, cutoff, makeup_window_start, makeup_window_end)
         ]
         if not versions:
             continue
         latest = sorted(versions, key=version_sort_key)[-1]
         if latest.get("状态") == "active":
             entries.append(merged_entry_version(entry, latest))
-    return sorted(entries, key=lambda item: (str(item.get("提交内容名", "")), str(item.get("班级", "")), str(item.get("学号", ""))))
+    return sorted(entries, key=lambda item: (str(item.get("班级", "")), str(item.get("提交内容名", "")), str(item.get("学号", ""))))
 
 
 def create_submission_zip(
@@ -37,6 +40,8 @@ def create_submission_zip(
     submission_label: str,
     manifest: dict[str, Any],
     cutoff: pd.Timestamp | None = None,
+    makeup_window_start: pd.Timestamp | None = None,
+    makeup_window_end: pd.Timestamp | None = None,
 ) -> Path:
     zip_dir = course_out_dir / "zip"
     zip_dir.mkdir(parents=True, exist_ok=True)
@@ -44,7 +49,7 @@ def create_submission_zip(
     if zip_path.exists():
         zip_path.unlink()
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for entry in active_entries_for_submission(manifest, submission_label, cutoff):
+        for entry in active_entries_for_submission(manifest, submission_label, cutoff, makeup_window_start, makeup_window_end):
             rel = str(entry.get("文件相对路径", "")).strip()
             if not rel:
                 continue
@@ -53,8 +58,8 @@ def create_submission_zip(
                 continue
             arcname = "/".join(
                 [
-                    sanitize_filename_component(str(entry.get("提交内容名", ""))),
                     sanitize_filename_component(str(entry.get("班级", ""))),
+                    sanitize_filename_component(str(entry.get("提交内容名", ""))),
                     source.name,
                 ]
             )

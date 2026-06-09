@@ -1,4 +1,4 @@
-# AGENTS.md — WeCom Collection Tracker 复盘与运维手册
+# OPERATIONS.md — WeCom Collection Tracker 复盘与运维手册
 
 > 更新于 2026-06-09，记录本次大规模排查与修复的全过程。
 
@@ -105,9 +105,9 @@
 
 ### 状态口径
 - 绿色：截止内有效提交
-- 蓝色：截止后补交
-- 红色：未提交
-- 黄色：后缀格式无效
+- 蓝色：补交窗口内有效补交，仅补交窗口模式显示
+- 红色：本次发布口径内未提交
+- 黄色：本次发布口径内后缀格式无效
 
 ## 5. 配置一览
 
@@ -199,7 +199,7 @@ out/collections/<collection_id>/
 │   └── current/              ← 当前激活版本快照
 │       └── <提交序号>/<提交内容>/<班级>/<学号姓名.ext>
 ├── history/                  ← 被新版本替换的旧文件（学生重交时移入）
-├── zip/                      ← 每次收集重建（--no-late 过滤补交）
+├── zip/                      ← 每次收集按发布模式重建
 └── stats/                    ← 统计报告副本（与 webapp/public/data/ 同步）
 ```
 
@@ -212,7 +212,7 @@ out/collections/<collection_id>/
 - `_versions` 不可变 + SHA256 + 时间戳 → 审计追责无敌
 - `archive_manifest.json` 是唯一真相源 → WeDrive 源删了不影响统计
 - `history/` 只增不删 → 学生重交旧文件不丢
-- ZIP 每次重建 → `--no-late` 开关不影响归档，逻辑干净
+- ZIP 每次重建 → 截止模式不含补交，补交窗口模式包含窗口内有效补交，逻辑干净
 - `current/` 是 `_versions/` 的视图 → 快速定位最新版本
 
 **未来可改进（非紧急）：**
@@ -224,9 +224,9 @@ out/collections/<collection_id>/
 
 ```
 Excel → merge_incremental_archive() [不过滤，全量归档到 _versions/ + current/]
-     → make_submission_stat() [按 cutoff 分类统计]
-     → create_submission_zip() [--no-late 时仅打包截止内文件]
+     → make_submission_stat() [按发布模式分类统计]
+     → create_submission_zip() [按发布模式打包有效文件]
      → write_collection_web_data() [发布到 webapp/public/]
 ```
 
-边界情况：截止后提交的唯一无效后缀文件 → `--no-late` 时标为未交（正确，截止后不管后缀）。
+边界情况：截止模式忽略截止后记录；补交窗口模式只接收窗口内记录，窗口外记录只保留在本地归档。

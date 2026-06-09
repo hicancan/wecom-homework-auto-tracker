@@ -3,9 +3,11 @@ import type { ContentStatSummary } from '../types'
 export function ContentSummary({
   contents,
   summaries,
+  allowMakeup,
 }: {
   contents: string[]
   summaries: ContentStatSummary[]
+  allowMakeup: boolean
 }) {
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-4">
@@ -21,7 +23,7 @@ export function ContentSummary({
                   <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-800">
                     已交 {summary.已交人数} / 应交 {summary.应交人数}
                   </span>
-                  {!!summary.已补交人数 && (
+                  {allowMakeup && !!summary.已补交人数 && (
                     <span className="rounded-full bg-sky-100 px-2 py-1 text-sky-800">补交 {summary.已补交人数}</span>
                   )}
                   {!!summary.后缀格式无效人数 && (

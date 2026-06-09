@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -29,6 +30,9 @@ class PlanItem:
     labels: list[str]
     cutoff_policy: str
     manual_cutoffs: dict[str, str]
+    publish_mode: str
+    makeup_window_start: str
+    makeup_window_end: str
 
 
 def normalize_text(value: object) -> str:
@@ -190,6 +194,27 @@ def choose_cutoff_policy(
     return policy, manual
 
 
+def default_makeup_window_end() -> str:
+    return datetime.now().strftime("%Y-%m-%d") + " 22:40:00"
+
+
+def choose_publish_mode() -> tuple[str, str, str]:
+    print("\n发布模式:")
+    print("  cutoff=截止模式，只发布截止时间内有效提交，ZIP 不含补交")
+    print("  makeup-window=补交窗口模式，发布截止内 + 补交窗口内有效提交，ZIP 含补交")
+    raw = input("是否开启补交窗口？[y/N]: ").strip().lower()
+    if raw not in {"y", "yes"}:
+        return "cutoff", "", ""
+
+    start = input("补交窗口开始时间（默认：各提交序号统计截止时间之后）: ").strip()
+    default_end = default_makeup_window_end()
+    end = input(f"补交窗口结束时间（默认 {default_end}）: ").strip() or default_end
+    pd.to_datetime(end, errors="raise")
+    if start:
+        pd.to_datetime(start, errors="raise")
+    return "makeup-window", start, end
+
+
 def choose_items(repo_root: Path, collections: list[CollectionConfig]) -> list[PlanItem]:
     print("\n可选收集表:")
     for idx, item in enumerate(collections, 1):
@@ -226,6 +251,7 @@ def choose_items(repo_root: Path, collections: list[CollectionConfig]) -> list[P
             labels_df=labels_df,
             published_cutoffs=load_published_cutoffs(repo_root, item.collection_id),
         )
+        publish_mode, makeup_window_start, makeup_window_end = choose_publish_mode()
         plan.append(
             PlanItem(
                 collection_id=item.collection_id,
@@ -233,6 +259,9 @@ def choose_items(repo_root: Path, collections: list[CollectionConfig]) -> list[P
                 labels=selected_labels,
                 cutoff_policy=cutoff_policy,
                 manual_cutoffs=manual_cutoffs,
+                publish_mode=publish_mode,
+                makeup_window_start=makeup_window_start,
+                makeup_window_end=makeup_window_end,
             )
         )
     return plan
@@ -260,6 +289,11 @@ def build_extract_cmd(
     cmd.extend(["--cutoff-policy", item.cutoff_policy])
     for label, cutoff in item.manual_cutoffs.items():
         cmd.extend(["--cutoff", f"{label}={cutoff}"])
+    cmd.extend(["--publish-mode", item.publish_mode])
+    if item.makeup_window_start:
+        cmd.extend(["--makeup-window-start", item.makeup_window_start])
+    if item.makeup_window_end:
+        cmd.extend(["--makeup-window-end", item.makeup_window_end])
     if cleanup_mode != "off":
         cmd.extend(["--cleanup-source-attachments", cleanup_mode])
     if cleanup_only:
@@ -361,7 +395,10 @@ def main() -> int:
     plan = choose_items(repo_root, collections)
     print("\n执行计划:")
     for item in plan:
-        print(f"- {item.collection_id}: {', '.join(item.labels)} | cutoff={item.cutoff_policy}")
+        window = ""
+        if item.publish_mode == "makeup-window":
+            window = f" | window={item.makeup_window_start or 'cutoff'} -> {item.makeup_window_end}"
+        print(f"- {item.collection_id}: {', '.join(item.labels)} | cutoff={item.cutoff_policy} | mode={item.publish_mode}{window}")
     if input("确认执行？[y/N]: ").strip().lower() != "y":
         print("已取消。")
         return 1

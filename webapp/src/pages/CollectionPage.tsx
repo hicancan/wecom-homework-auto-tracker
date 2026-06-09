@@ -164,9 +164,10 @@ export function CollectionPage() {
     return Object.entries(submissionData.班级统计).sort(([a], [b]) => a.localeCompare(b))
   }, [submissionData])
   const summary = submissionData?.汇总
+  const allowMakeup = submissionData?.允许补交 === true
   const expected = summary?.应交总人数 || 0
   const submitted = summary?.已交总人数 || 0
-  const late = summary?.已补交总人数 || 0
+  const late = allowMakeup ? summary?.已补交总人数 || 0 : 0
   const invalid = summary?.后缀格式无效总人数 || 0
   const rate = summary?.总提交率 || 0
   const segments = buildStatusSegments(expected, submitted, late, invalid)
@@ -257,28 +258,40 @@ export function CollectionPage() {
                 </label>
               </div>
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                <StatusLegend />
-                <p className="text-sm text-slate-500">统计截止时间：{submissionData?.统计截止时间 || '加载中...'}</p>
+                <StatusLegend allowMakeup={allowMakeup} />
+                <div className="text-sm text-slate-500">
+                  <p>统计截止时间：{submissionData?.统计截止时间 || '加载中...'}</p>
+                  <p className={allowMakeup ? 'text-sky-700' : 'text-slate-600'}>
+                    {allowMakeup
+                      ? `允许补交：${submissionData?.补交窗口开始时间 || submissionData?.统计截止时间 || '-'} 之后至 ${submissionData?.补交窗口结束时间 || '-'}`
+                      : '不允许补交'}
+                  </p>
+                </div>
               </div>
             </section>
 
-            <ContentSummary contents={selectedContentList} summaries={contentSummaries} />
+            <ContentSummary contents={selectedContentList} summaries={contentSummaries} allowMakeup={allowMakeup} />
 
             <section className="grid gap-5 lg:grid-cols-[1fr_320px]">
               <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-5">
-                <p className="text-sm font-semibold text-emerald-700">应交 / 最终提交 / 未提交</p>
+                <p className="text-sm font-semibold text-emerald-700">
+                  {allowMakeup ? '应交 / 已接收 / 未达标' : '应交 / 截止提交 / 未达标'}
+                </p>
                 <p className="mt-3 text-4xl font-bold text-slate-900">
                   {expected} / {submitted} / {summary?.未交总人数 ?? 0}
                 </p>
                 <p className="mt-2 text-sm text-slate-600">
-                  截止内 {summary?.截止已交总人数 ?? submitted - late}，补交 {late}，后缀格式无效 {invalid}
+                  截止内 {summary?.截止已交总人数 ?? submitted - late}
+                  {allowMakeup ? `，补交 ${late}` : ''}，后缀格式无效 {invalid}
                 </p>
                 <div className="mt-5">
                   <StatusProgressBar segments={segments} />
                 </div>
               </div>
               <div className="rounded-lg border border-slate-200 bg-white p-5">
-                <p className="text-sm font-semibold text-slate-600">当前提交序号最终提交率</p>
+                <p className="text-sm font-semibold text-slate-600">
+                  {allowMakeup ? '当前提交序号接收率' : '当前提交序号截止提交率'}
+                </p>
                 <div className="mt-4">
                   <StatusDonut rate={rate} segments={segments} />
                 </div>
@@ -287,12 +300,13 @@ export function CollectionPage() {
 
             <section className="grid gap-4 xl:grid-cols-2">
               {classEntries.map(([className, stat]) => (
-                <ClassStatusCard key={className} className={className} stat={stat} />
+                <ClassStatusCard key={className} className={className} stat={stat} allowMakeup={allowMakeup} />
               ))}
               <OtherStatusCard
                 submitted={submissionData?.其他已交名单 || []}
                 late={submissionData?.其他已补交名单 || []}
                 invalid={submissionData?.其他后缀格式无效名单 || []}
+                allowMakeup={allowMakeup}
               />
             </section>
           </div>

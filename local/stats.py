@@ -5,7 +5,7 @@ from typing import Any
 
 import pandas as pd
 
-from archive import active_entry_for
+from archive import accepted_entry_for, active_entry_for
 from contract import format_datetime, now_text, parse_datetime_text, sanitize_filename_component
 from web_publish import read_json_object
 
@@ -88,6 +88,25 @@ def build_invalid_suffix_summary(stat: dict[str, Any]) -> dict[str, Any]:
     return {"总人数": total, "班级统计": by_class}
 
 
+def is_makeup_window_mode(publish_mode: str) -> bool:
+    return publish_mode == "makeup-window"
+
+
+def publication_mode_text(publish_mode: str) -> str:
+    if publish_mode == "cutoff":
+        return "截止模式"
+    if publish_mode == "makeup-window":
+        return "补交窗口模式"
+    raise ValueError(f"未知发布模式: {publish_mode}")
+
+
+def entry_after_cutoff(entry: dict[str, Any] | None, cutoff: pd.Timestamp | None) -> bool:
+    if entry is None or cutoff is None:
+        return False
+    ts = parse_datetime_text(entry.get("提交时间"))
+    return bool(ts is not None and ts > cutoff)
+
+
 def make_submission_stat(
     *,
     df: pd.DataFrame,
@@ -99,8 +118,21 @@ def make_submission_stat(
     students_by_class: dict[str, list[dict[str, str]]],
     other_students_by_name: dict[str, dict[str, str]],
     cutoff: pd.Timestamp | None,
-    no_late: bool = False,
+    publish_mode: str = "cutoff",
+    makeup_window_start: pd.Timestamp | None = None,
+    makeup_window_end: pd.Timestamp | None = None,
 ) -> dict[str, Any]:
+    allow_makeup = is_makeup_window_mode(publish_mode)
+    if allow_makeup:
+        if makeup_window_end is None:
+            raise ValueError("补交窗口模式必须提供补交窗口结束时间。")
+        effective_start = makeup_window_start or cutoff
+        if effective_start is not None and makeup_window_end <= effective_start:
+            raise ValueError("补交窗口结束时间必须晚于补交窗口开始时间。")
+    else:
+        makeup_window_start = None
+        makeup_window_end = None
+
     df_submission = df[df["_submission_label"] == submission_label]
     if cutoff is not None:
         df_submission = df_submission[df_submission["_record_time"] <= cutoff]
@@ -118,6 +150,10 @@ def make_submission_stat(
         "提交内容列表": content_labels,
         "最后提交时间": "",
         "统计截止时间": format_datetime(cutoff) if cutoff is not None else "",
+        "发布模式": publication_mode_text(publish_mode),
+        "允许补交": allow_makeup,
+        "补交窗口开始时间": format_datetime(makeup_window_start or cutoff) if allow_makeup else "",
+        "补交窗口结束时间": format_datetime(makeup_window_end) if allow_makeup else "",
         "最后收集记录时间": latest_record_time,
         "统计生成时间": now_text(),
         "总班级数": len(students_by_class),
@@ -152,7 +188,15 @@ def make_submission_stat(
             content_late_submitted: list[str] = []
             for student in students:
                 cutoff_entry = active_entry_for(manifest, student["学号"], submission_label, content_label, cutoff)
-                final_entry = cutoff_entry if no_late else active_entry_for(manifest, student["学号"], submission_label, content_label, None)
+                final_entry = accepted_entry_for(
+                    manifest,
+                    student["学号"],
+                    submission_label,
+                    content_label,
+                    cutoff,
+                    makeup_window_start,
+                    makeup_window_end,
+                )
                 cutoff_active = bool(cutoff_entry and cutoff_entry.get("状态") == "active")
                 final_active = bool(final_entry and final_entry.get("状态") == "active")
                 final_invalid = bool(
@@ -170,7 +214,7 @@ def make_submission_stat(
 
                 if final_active:
                     content_final_submitted.append(student["学号"])
-                    if not cutoff_active:
+                    if allow_makeup and entry_after_cutoff(final_entry, cutoff):
                         content_late_submitted.append(student["学号"])
                     entry = final_entry
                     ts = parse_datetime_text(entry.get("提交时间"))
@@ -205,7 +249,15 @@ def make_submission_stat(
                 for content_label in content_labels
             ]
             final_entries = [
-                active_entry_for(manifest, student["学号"], submission_label, content_label, None if not no_late else cutoff)
+                accepted_entry_for(
+                    manifest,
+                    student["学号"],
+                    submission_label,
+                    content_label,
+                    cutoff,
+                    makeup_window_start,
+                    makeup_window_end,
+                )
                 for content_label in content_labels
             ]
             cutoff_complete = bool(cutoff_entries and all(entry and entry.get("状态") == "active" for entry in cutoff_entries))
@@ -225,7 +277,7 @@ def make_submission_stat(
 
             if final_complete:
                 final_complete_students.append(student["学号"])
-                if not cutoff_complete:
+                if allow_makeup and any(entry_after_cutoff(entry, cutoff) for entry in final_entries):
                     class_late_complete_students.add(student["学号"])
             else:
                 final_not_complete_students.append(student["学号"])
@@ -271,19 +323,24 @@ def make_submission_stat(
             for content_label in content_labels
         ]
         final_entries = [
-            active_entry_for(manifest, student["学号"], submission_label, content_label, None if not no_late else cutoff)
+            accepted_entry_for(
+                manifest,
+                student["学号"],
+                submission_label,
+                content_label,
+                cutoff,
+                makeup_window_start,
+                makeup_window_end,
+            )
             for content_label in content_labels
         ]
         cutoff_complete = bool(cutoff_entries and all(entry and entry.get("状态") == "active" for entry in cutoff_entries))
         final_complete = bool(final_entries and all(entry and entry.get("状态") == "active" for entry in final_entries))
-        if cutoff_complete:
-            other_submitted.append(student["学号"])
-            for entry in cutoff_entries:
-                ts = parse_datetime_text(entry.get("提交时间")) if entry else None
-                if ts is not None:
-                    valid_submit_times.append(ts)
-        elif final_complete:
-            other_late_submitted.append(student["学号"])
+        if final_complete:
+            if allow_makeup and any(entry_after_cutoff(entry, cutoff) for entry in final_entries):
+                other_late_submitted.append(student["学号"])
+            else:
+                other_submitted.append(student["学号"])
             for entry in final_entries:
                 ts = parse_datetime_text(entry.get("提交时间")) if entry else None
                 if ts is not None:

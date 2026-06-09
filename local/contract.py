@@ -154,6 +154,28 @@ def entry_time_within_cutoff(entry: dict[str, Any], cutoff: pd.Timestamp | None)
     return ts <= cutoff
 
 
+def entry_time_in_publication_window(
+    entry: dict[str, Any],
+    cutoff: pd.Timestamp | None,
+    makeup_window_start: pd.Timestamp | None,
+    makeup_window_end: pd.Timestamp | None,
+) -> bool:
+    if makeup_window_end is None:
+        return entry_time_within_cutoff(entry, cutoff)
+
+    ts = parse_datetime_text(entry.get("提交时间"))
+    if ts is None:
+        return False
+
+    if cutoff is not None and ts <= cutoff:
+        return True
+
+    start = makeup_window_start or cutoff
+    if start is not None and ts <= start:
+        return False
+    return ts <= makeup_window_end
+
+
 def hash_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as f:

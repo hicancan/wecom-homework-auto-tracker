@@ -82,7 +82,8 @@ uv run python .\local\extract_homework.py `
   --config .\config\config.json `
   --collection-id example-collection-b240401-sophomore-spring `
   --label 第1次 `
-  --cutoff-policy keep
+  --cutoff-policy keep `
+  --publish-mode cutoff
 ```
 
 截止策略：
@@ -90,6 +91,23 @@ uv run python .\local\extract_homework.py `
 - `keep`: 已发布提交序号保留旧截止；新提交序号首次发布使用当前 Excel 最新填写时间。
 - `advance`: 推进到当前 Excel 最新填写时间。
 - `manual`: 使用 `--cutoff "第1次=YYYY-MM-DD HH:MM:SS"`。
+
+发布模式：
+
+- `cutoff`: 默认模式，只发布统计截止时间内的有效提交；页面显示“不允许补交”，ZIP 不含补交。
+- `makeup-window`: 补交窗口模式，发布截止内有效提交 + 补交窗口内有效提交；必须提供 `--makeup-window-end "YYYY-MM-DD HH:MM:SS"`。
+
+补交窗口示例：
+
+```powershell
+uv run python .\local\extract_homework.py `
+  --config .\config\config.json `
+  --collection-id example-collection-b240401-sophomore-spring `
+  --label 第1次 `
+  --cutoff-policy keep `
+  --publish-mode makeup-window `
+  --makeup-window-end "2026-06-09 22:40:00"
+```
 
 交互入口：
 
@@ -114,7 +132,7 @@ out/collections/<collection_id>/
 
 `archive_manifest.json` 是本地权威基线。企业微信同步目录删除源文件时，只要本地归档已有有效版本，就不会回退为未提交。
 
-后缀格式无效的版本会保留在归档中用于审计，但不计入最终提交，不进入 zip。
+后缀格式无效的版本会保留在归档中用于审计，但不计入有效提交，不进入 zip。
 
 ## 公开数据
 
@@ -137,16 +155,17 @@ webapp/public/data/<collection_id>/seq-001.json
 ## 状态口径
 
 - 绿色：截止时间内有效提交。
-- 蓝色：截止时间后有效补交。
-- 红色：最终仍未提交。
-- 黄色：最新提交后缀格式无效。
+- 蓝色：补交窗口内有效补交，仅在补交窗口模式显示。
+- 红色：本次发布口径内仍未提交。
+- 黄色：本次发布口径内最新提交后缀格式无效。
 
-最终提交率和 zip 都按“截止内有效提交 + 补交有效提交”计算。
+默认截止模式的提交率和 zip 只按截止时间内有效提交计算。补交窗口模式的提交率和 zip 按“截止内有效提交 + 补交窗口内有效提交”计算。
 
 ## 验证
 
 ```powershell
-uv run python -m py_compile local\*.py scripts\*.py
+$files = @(Get-ChildItem -Path .\local, .\scripts -Filter *.py | ForEach-Object { $_.FullName })
+uv run python -m py_compile @files
 uv run pytest
 cd webapp
 npm run lint

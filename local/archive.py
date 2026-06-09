@@ -13,6 +13,7 @@ import pandas as pd
 from contract import (
     ARCHIVE_SCHEMA_VERSION,
     dump_json,
+    entry_time_in_publication_window,
     entry_time_within_cutoff,
     format_datetime,
     hash_file,
@@ -439,6 +440,29 @@ def active_entry_for(
         version
         for version in entry.get("versions", [])
         if isinstance(version, dict) and entry_time_within_cutoff(version, cutoff)
+    ]
+    if not versions:
+        return None
+    return merged_entry_version(entry, sorted(versions, key=version_sort_key)[-1])
+
+
+def accepted_entry_for(
+    manifest: dict[str, Any],
+    student_no: str,
+    submission_label: str,
+    content_label: str,
+    cutoff: pd.Timestamp | None,
+    makeup_window_start: pd.Timestamp | None = None,
+    makeup_window_end: pd.Timestamp | None = None,
+) -> dict[str, Any] | None:
+    entry = manifest.get("entries", {}).get(archive_entry_id(student_no, submission_label, content_label))
+    if not isinstance(entry, dict):
+        return None
+    versions = [
+        version
+        for version in entry.get("versions", [])
+        if isinstance(version, dict)
+        and entry_time_in_publication_window(version, cutoff, makeup_window_start, makeup_window_end)
     ]
     if not versions:
         return None

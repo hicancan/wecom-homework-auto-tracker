@@ -29,22 +29,22 @@ function addRecords(records: StudentRecord[], values: string[] | undefined, tone
   }
 }
 
-function buildClassRecords(stat: ClassStat): StudentRecord[] {
+function buildClassRecords(stat: ClassStat, allowMakeup: boolean): StudentRecord[] {
   const records: StudentRecord[] = []
   const seen = new Set<string>()
   addRecords(records, stat.截止已交名单 || stat.已交名单, tones.submitted, seen)
-  addRecords(records, stat.已补交名单, tones.late, seen)
+  if (allowMakeup) addRecords(records, stat.已补交名单, tones.late, seen)
   addRecords(records, stat.后缀格式无效名单, tones.invalid, seen)
   addRecords(records, stat.未交名单, tones.missing, seen)
   return records.sort((a, b) => a.studentNo.localeCompare(b.studentNo))
 }
 
-export function ClassStatusCard({ className, stat }: { className: string; stat: ClassStat }) {
-  const records = buildClassRecords(stat)
+export function ClassStatusCard({ className, stat, allowMakeup }: { className: string; stat: ClassStat; allowMakeup: boolean }) {
+  const records = buildClassRecords(stat, allowMakeup)
   const segments = buildStatusSegments(
     stat.应交人数,
     stat.已交人数,
-    stat.已补交人数 || 0,
+    allowMakeup ? stat.已补交人数 || 0 : 0,
     stat.后缀格式无效人数 || 0,
   )
 
@@ -54,7 +54,7 @@ export function ClassStatusCard({ className, stat }: { className: string; stat: 
         <div>
           <h3 className="text-lg font-bold text-slate-900">{className}</h3>
           <p className="mt-1 text-sm text-slate-500">
-            应交 {stat.应交人数} / 最终提交 {stat.已交人数} / 未提交 {stat.未交人数}
+            应交 {stat.应交人数} / {allowMakeup ? '已接收' : '截止提交'} {stat.已交人数} / 未达标 {stat.未交人数}
           </p>
         </div>
         <div className="text-right text-sm font-semibold text-slate-700">{(stat.提交率 * 100).toFixed(2)}%</div>
@@ -81,15 +81,17 @@ export function OtherStatusCard({
   submitted,
   late,
   invalid,
+  allowMakeup,
 }: {
   submitted: string[]
   late: string[]
   invalid: string[]
+  allowMakeup: boolean
 }) {
   const records: StudentRecord[] = []
   const seen = new Set<string>()
   addRecords(records, submitted, tones.submitted, seen)
-  addRecords(records, late, tones.late, seen)
+  if (allowMakeup) addRecords(records, late, tones.late, seen)
   addRecords(records, invalid, tones.invalid, seen)
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-4">

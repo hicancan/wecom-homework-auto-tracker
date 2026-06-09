@@ -94,6 +94,10 @@ export type SubmissionStat = {
   最后部署时间?: string
   最后提交时间?: string
   统计截止时间?: string
+  发布模式?: '截止模式' | '补交窗口模式'
+  允许补交?: boolean
+  补交窗口开始时间?: string
+  补交窗口结束时间?: string
   后缀格式无效?: IssueSummary
   其他已交名单?: string[]
   其他后缀格式无效名单?: string[]

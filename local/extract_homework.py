@@ -93,6 +93,16 @@ def parse_manual_cutoffs(values: list[str]) -> dict[str, pd.Timestamp]:
     return cutoffs
 
 
+def parse_cli_datetime(value: str, option_name: str) -> pd.Timestamp | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    parsed = parse_datetime_text(text)
+    if parsed is None:
+        raise ValueError(f"{option_name} 时间无效: {value}")
+    return parsed
+
+
 def pick_excel(args: argparse.Namespace, repo_root: Path, cfg: dict[str, Any]) -> tuple[str, Path, dict[str, Any]]:
     registry = collection_registry(cfg)
     excels = configured_excels(repo_root, cfg, registry)
@@ -210,7 +220,9 @@ def process_collection(
     cleanup_mode: str,
     cleanup_only: bool,
     skip_unknown: bool,
-    no_late: bool,
+    publish_mode: str,
+    makeup_window_start: pd.Timestamp | None,
+    makeup_window_end: pd.Timestamp | None,
     configured_meta: dict[str, Any],
 ) -> dict[str, Any]:
     df, parsed_meta, columns = load_collection_excel(excel_path)
@@ -304,11 +316,8 @@ def process_collection(
     for label in selected_labels:
         label_rows = df[df["_submission_label"] == label]
         cutoff = submission_cutoffs.get(label)
-        if cutoff is not None:
-            label_rows = label_rows[label_rows["_record_time"] <= cutoff]
         content_labels = sorted(dict.fromkeys(label_rows["_content_label"].tolist()))
-        if not content_labels:
-            content_labels = sorted(dict.fromkeys(df[df["_submission_label"] == label]["_content_label"].tolist()))
+        label_makeup_start = makeup_window_start or cutoff
         stat = make_submission_stat(
             df=df,
             columns=columns,
@@ -319,12 +328,24 @@ def process_collection(
             students_by_class=students_by_class,
             other_students_by_name=other_students_by_name,
             cutoff=cutoff,
-            no_late=no_late,
+            publish_mode=publish_mode,
+            makeup_window_start=label_makeup_start if publish_mode == "makeup-window" else None,
+            makeup_window_end=makeup_window_end if publish_mode == "makeup-window" else None,
         )
         stats[label] = stat
         write_submission_reports(collection_out_dir, label, stat)
-        zip_cutoff = cutoff if no_late else None
-        zip_paths.append(str(create_submission_zip(collection_out_dir, label, manifest, zip_cutoff)))
+        zip_paths.append(
+            str(
+                create_submission_zip(
+                    collection_out_dir,
+                    label,
+                    manifest,
+                    cutoff,
+                    label_makeup_start if publish_mode == "makeup-window" else None,
+                    makeup_window_end if publish_mode == "makeup-window" else None,
+                )
+            )
+        )
 
     archive_counts = _count_archive_status(manifest)
     print(f"\n  归档状态: active={archive_counts['active']} missing={archive_counts['missing']} invalid={archive_counts['invalid']}")
@@ -340,6 +361,7 @@ def process_collection(
         "提交序号列表": selected_labels,
         "统计文件目录": str(collection_out_dir / "stats"),
         "压缩包列表": zip_paths,
+        "发布模式": "补交窗口模式" if publish_mode == "makeup-window" else "截止模式",
         "归档统计": archive_counts,
     }
     (collection_out_dir / "collection_summary.json").write_text(dump_json(summary), encoding="utf-8")
@@ -399,7 +421,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--cleanup-only", action="store_true", help="仅执行源文件清理，不更新归档和 web 数据")
     parser.add_argument("--skip-unknown", action="store_true", help="跳过不在名单中的填写人，不触发 fail-fast")
-    parser.add_argument("--no-late", action="store_true", help="不允许补交：ZIP 只打包截止内文件，补交计入未交")
+    parser.add_argument(
+        "--publish-mode",
+        choices=["cutoff", "makeup-window"],
+        default="cutoff",
+        help="发布模式：cutoff 只发布截止内统计和 ZIP；makeup-window 发布截止内 + 补交窗口内统计和 ZIP",
+    )
+    parser.add_argument("--makeup-window-start", default="", help="补交窗口开始时间；默认等于各提交序号统计截止时间")
+    parser.add_argument("--makeup-window-end", default="", help="补交窗口结束时间，格式 YYYY-MM-DD HH:MM:SS")
+    parser.add_argument("--no-late", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--list-collections", action="store_true")
     parser.add_argument("--list-submission-labels", action="store_true")
     return parser.parse_args()
@@ -413,6 +443,7 @@ def main() -> None:
         fallback = repo_root / "config" / "local.config.json"
         config_path = fallback if fallback.exists() else config_path
     cfg = load_local_config(config_path)
+    publish_mode = "cutoff" if args.no_late else args.publish_mode
     collection_id, excel_path, configured_meta = pick_excel(args, repo_root, cfg)
     df, _, _ = load_collection_excel(excel_path)
     labels = sorted(dict.fromkeys(df["_submission_label"].tolist()), key=sort_submission_key)
@@ -436,7 +467,9 @@ def main() -> None:
         cleanup_mode=args.cleanup_source_attachments,
         cleanup_only=args.cleanup_only,
         skip_unknown=args.skip_unknown,
-        no_late=args.no_late,
+        publish_mode=publish_mode,
+        makeup_window_start=parse_cli_datetime(args.makeup_window_start, "--makeup-window-start"),
+        makeup_window_end=parse_cli_datetime(args.makeup_window_end, "--makeup-window-end"),
         configured_meta=configured_meta,
     )
     print("处理完成:")
