@@ -1,0 +1,160 @@
+# AGENTS.md — WeCom Collection Tracker 复盘与运维手册
+
+> 更新于 2026-06-09，记录本次大规模排查与修复的全过程。
+
+---
+
+## 1. 系统健康状态
+
+| 指标 | 状态 |
+|------|------|
+| 源码 | ✅ 2处修复（fail-fast + archive摘要） |
+| 测试 | ✅ 15/15 pass |
+| Excel 数据完整性 | ✅ 3份 Excel 提交内容列已补齐 |
+| 学生名单覆盖率 | ✅ 92 主名单 + 7 other_students = 99人 |
+| Web 看板 | ✅ 已推送，数据准确 |
+| 归档文件 | ✅ 作业 530 active / 实验 244 active |
+
+## 2. 核心发现：3 位补修学生被静默跳过
+
+### 根因
+
+`local/archive.py:330-332` — 不在名单中的填写人直接 `continue`，不留任何痕迹。
+
+### 受影响学生
+
+| 姓名 | 学号 | 发现来源 |
+|------|------|----------|
+| 陈国冲 | B23110621 | NJUPT Galaxy (DuckDB → SQLite 查询) |
+| 陈嘉豪 | B23110622 | NJUPT Galaxy |
+| 郭洋 | B23170222 | NJUPT Galaxy |
+
+学号查询工具：`D:\code\Python\newNJUPT\njupt_kit_gallery.py`（Flask + SQLite，数据源 `data/njupt_galaxy.db`，约 19 万条）。
+
+### 影响范围
+
+- **作业**：3 人全部补交（今天 06-09 集中提交），文件已归档
+- **实验**：陈嘉豪/郭洋截止前提交了 1-3 次，但 WeDrive 文件已被清理，无法恢复
+- **陈国冲实验**：完全未提交
+
+### 文件丢失分析（截止前 vs 截止后）
+
+截止前提交但文件丢失（需关注）：
+- 郭洋 作业第1次（03-24 12:27，截止 12:49）
+- 陈嘉豪/郭洋 实验第1-3次（截止前提交，WeDrive 清理后丢失）
+
+截止后提交（无需处理）：15 条。其余 missing 均为 WeDrive 云端清理后的正常状态（B类，本地 `out/` 有备份，共 655 条）。
+
+## 3. 已实施的修复
+
+### 3.1 Fail-Fast：未知学生阻断
+
+`local/extract_homework.py` 新增 `check_unknown_students()`：
+- 收集前扫描 Excel vs 所有名单
+- 发现未知学生 → 打印报告 + `SystemExit(1)`
+- `--skip-unknown` 可跳过
+
+报告示例：
+```
+============================================================
+  [ERROR] 发现 3 位不在学生名单中的填写人
+============================================================
+  姓名: 陈国冲
+  推测学号: 未检测到
+  提交序号: 第1次, 第2次, 第3次, 第4次, 第5次, 第6次
+  ...
+  解决方法:
+    1. 将学生加入 config/other_students.json
+    2. 或使用 --skip-unknown 跳过未知学生继续收集
+============================================================
+```
+
+### 3.2 Archive 状态摘要
+
+每次收集后打印 `归档状态: active=N missing=N invalid=N`，第一时间暴露文件丢失。
+
+### 3.3 Bug 修复
+
+- `local/stats.py`：补 `from web_publish import read_json_object`
+
+### 3.4 Excel 数据修复
+
+| 文件 | 修复内容 | 数量 |
+|------|---------|------|
+| 算法作业 Excel | 空提交内容 → `作业(.doc/.docx)` | 554 格 |
+| 算法实验 Excel | 空提交内容 → `实验报告(.doc/.docx)` | 283 格 |
+
+## 4. 数据模型速查
+
+### 收集表标题格式
+```
+主题[对象][周期]
+```
+例：`算法分析与设计作业[B240401-03][大二下]`
+
+### 提交内容格式
+```
+内容名(.ext1/.ext2)
+```
+例：`作业(.doc/.docx)`、`实验报告(.doc/.docx)`
+
+### 唯一业务键
+```
+学号 + 提交序号 + 提交内容
+```
+
+### 状态口径
+- 绿色：截止内有效提交
+- 蓝色：截止后补交
+- 红色：未提交
+- 黄色：后缀格式无效
+
+## 5. 配置一览
+
+| 文件 | 说明 |
+|------|------|
+| `config/local.config.json` | 本地配置（不入 git） |
+| `config/B240401_to_B240403_students.json` | 主名单 92 人（不入 git） |
+| `config/other_students.json` | 补修/重修 7 人（不入 git） |
+| `config/other_students.template.json` | 模板（入 git） |
+| `config/*.xlsx` | 企业微信收集表导出（不入 git） |
+
+### other_students.json 当前 7 人
+```
+B23100218 李润泽    B23170411 蒋依扬    B23021002 马宇晨
+B23041425 夏嘉瑞    B23110621 陈国冲    B23110622 陈嘉豪
+B23170222 郭洋
+```
+
+### 学生名单跨专业情况（11 人学号前缀 ≠ 班级）
+B240401 班有 4 人来自 B240518/B240905/B241203；
+B240402 班有 4 人来自 B241002/B241602；
+B240403 班有 3 人来自 B240224/B240811/B241208。
+全部是 B24 开头（2024 级），不影响姓名匹配。
+
+## 6. 常用命令
+
+```powershell
+# 交互模式（推荐）
+uv run python .\scripts\run_extract_interactive.py --config .\config\local.config.json
+
+# 命令行
+uv run python .\local\extract_homework.py `
+  --config .\config\local.config.json `
+  --collection-id algorithm-design-homework-b240401-03-sophomore-spring `
+  --label 第1次 --cutoff-policy keep
+
+# 测试
+uv run pytest
+
+# 学号查询（NJUPT Galaxy）
+# 源码：D:\code\Python\newNJUPT\njupt_kit_gallery.py
+# 数据库：D:\code\Python\newNJUPT\data\njupt_galaxy.db (SQLite)
+```
+
+## 7. 已知约束
+
+1. **other_students.json 需手动维护**：新增补修学生必须手动加入，否则 fail-fast 会阻断
+2. **WeDrive 源文件生命周期**：云端清理后，已归档的条目不受影响（本地 out/ 有备份），但未归档的条目永久丢失
+3. **实验目前只布置到第 3 次**：收集时只跑 1-3，不要跑 4-6
+4. **AI 导论实验尚未排查**：提交内容是 `企业微信用户` 而非标准格式，需要确认后修复并收集
