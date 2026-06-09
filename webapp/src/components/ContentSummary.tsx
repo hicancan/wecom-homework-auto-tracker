@@ -21,14 +21,14 @@ export function ContentSummary({
               {summary && (
                 <div className="mt-2 flex flex-wrap gap-2 text-xs">
                   <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-800">
-                    已交 {summary.已交人数} / 应交 {summary.应交人数}
+                    已提交 {summary.已提交人数} / 应交 {summary.应交人数}
                   </span>
                   {allowMakeup && !!summary.已补交人数 && (
-                    <span className="rounded-full bg-sky-100 px-2 py-1 text-sky-800">补交 {summary.已补交人数}</span>
+                    <span className="rounded-full bg-sky-100 px-2 py-1 text-sky-800">已补交 {summary.已补交人数}</span>
                   )}
-                  {!!summary.后缀格式无效人数 && (
+                  {!!summary.后缀无效人数 && (
                     <span className="rounded-full bg-amber-100 px-2 py-1 text-amber-800">
-                      后缀格式无效 {summary.后缀格式无效人数}
+                      后缀无效 {summary.后缀无效人数}
                     </span>
                   )}
                 </div>

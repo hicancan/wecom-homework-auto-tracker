@@ -97,11 +97,11 @@ def test_cutoff_mode_excludes_late_submission_and_invalid_suffix_is_not_zipped(t
     assert stat["汇总"]["应交总人数"] == 2
     assert stat["发布模式"] == "截止模式"
     assert stat["允许补交"] is False
-    assert stat["汇总"]["已交总人数"] == 0
+    assert stat["汇总"]["已提交总人数"] == 0
     assert stat["汇总"]["已补交总人数"] == 0
-    assert stat["汇总"]["后缀格式无效总人数"] == 0
+    assert stat["汇总"]["后缀无效总人数"] == 0
     assert stat["班级统计"]["B240401"]["已补交名单"] == []
-    assert stat["班级统计"]["B240401"]["后缀格式无效名单"] == []
+    assert stat["班级统计"]["B240401"]["后缀无效名单"] == []
 
     zip_path = create_submission_zip(collection_dir, "第1次", manifest, pd.Timestamp("2026-06-09 09:00:00"))
     with zipfile.ZipFile(zip_path) as archive:
@@ -137,11 +137,11 @@ def test_makeup_window_counts_late_submission_and_zip_is_class_first(tmp_path: P
     assert stat["允许补交"] is True
     assert stat["补交窗口开始时间"] == "2026-06-09 09:00:00"
     assert stat["补交窗口结束时间"] == "2026-06-09 22:40:00"
-    assert stat["汇总"]["已交总人数"] == 1
+    assert stat["汇总"]["已提交总人数"] == 1
     assert stat["汇总"]["已补交总人数"] == 1
-    assert stat["汇总"]["后缀格式无效总人数"] == 1
+    assert stat["汇总"]["后缀无效总人数"] == 1
     assert stat["班级统计"]["B240401"]["已补交名单"] == ["B24040101"]
-    assert stat["班级统计"]["B240401"]["后缀格式无效名单"] == ["B24040102"]
+    assert stat["班级统计"]["B240401"]["后缀无效名单"] == ["B24040102"]
 
     zip_path = create_submission_zip(
         collection_dir,

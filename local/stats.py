@@ -78,10 +78,10 @@ def resolve_submission_cutoffs(
 def build_invalid_suffix_summary(stat: dict[str, Any]) -> dict[str, Any]:
     by_class: dict[str, list[str]] = {}
     for class_name, class_stat in stat.get("班级统计", {}).items():
-        invalid = sorted(set(class_stat.get("后缀格式无效名单", [])))
+        invalid = sorted(set(class_stat.get("后缀无效名单", [])))
         if invalid:
             by_class[class_name] = invalid
-    other = sorted(set(stat.get("其他后缀格式无效名单", [])))
+    other = sorted(set(stat.get("其他后缀无效名单", [])))
     if other:
         by_class["其他"] = other
     total = sum(len(items) for items in by_class.values())
@@ -227,18 +227,18 @@ def make_submission_stat(
                         class_invalid_students.add(student["学号"])
             content_stats[content_label]["班级统计"][class_name] = {
                 "应交人数": len(students),
-                "截止已交人数": len(content_cutoff_submitted),
-                "截止未交人数": len(content_cutoff_not_submitted),
+                "截止已提交人数": len(content_cutoff_submitted),
+                "截止未提交人数": len(content_cutoff_not_submitted),
                 "截止提交率": round((len(content_cutoff_submitted) / len(students)) if students else 0, 4),
-                "截止已交名单": sorted(content_cutoff_submitted),
-                "截止未交名单": sorted(content_cutoff_not_submitted),
-                "已交人数": len(content_final_submitted),
-                "未交人数": len(content_final_not_submitted),
+                "截止已提交名单": sorted(content_cutoff_submitted),
+                "截止未提交名单": sorted(content_cutoff_not_submitted),
+                "已提交人数": len(content_final_submitted),
+                "未提交人数": len(content_final_not_submitted),
                 "提交率": round((len(content_final_submitted) / len(students)) if students else 0, 4),
-                "已交名单": sorted(content_final_submitted),
-                "未交名单": sorted(content_final_not_submitted),
-                "后缀格式无效人数": len(content_invalid),
-                "后缀格式无效名单": sorted(content_invalid),
+                "已提交名单": sorted(content_final_submitted),
+                "未提交名单": sorted(content_final_not_submitted),
+                "后缀无效人数": len(content_invalid),
+                "后缀无效名单": sorted(content_invalid),
                 "已补交人数": len(content_late_submitted),
                 "已补交名单": sorted(content_late_submitted),
             }
@@ -295,18 +295,18 @@ def make_submission_stat(
         total_invalid += len(class_invalid_students)
         stat["班级统计"][class_name] = {
             "应交人数": expected_count,
-            "截止已交人数": cutoff_submitted_count,
-            "截止未交人数": expected_count - cutoff_submitted_count,
+            "截止已提交人数": cutoff_submitted_count,
+            "截止未提交人数": expected_count - cutoff_submitted_count,
             "截止提交率": round((cutoff_submitted_count / expected_count) if expected_count else 0, 4),
-            "截止已交名单": sorted(cutoff_complete_students),
-            "截止未交名单": sorted(cutoff_not_complete_students),
-            "已交人数": submitted_count,
-            "未交人数": expected_count - submitted_count,
+            "截止已提交名单": sorted(cutoff_complete_students),
+            "截止未提交名单": sorted(cutoff_not_complete_students),
+            "已提交人数": submitted_count,
+            "未提交人数": expected_count - submitted_count,
             "提交率": round((submitted_count / expected_count) if expected_count else 0, 4),
-            "已交名单": sorted(final_complete_students),
-            "未交名单": sorted(final_not_complete_students),
-            "后缀格式无效人数": len(class_invalid_students),
-            "后缀格式无效名单": sorted(class_invalid_students),
+            "已提交名单": sorted(final_complete_students),
+            "未提交名单": sorted(final_not_complete_students),
+            "后缀无效人数": len(class_invalid_students),
+            "后缀无效名单": sorted(class_invalid_students),
             "已补交人数": late_submitted_count,
             "已补交名单": sorted(class_late_complete_students),
         }
@@ -354,18 +354,18 @@ def make_submission_stat(
 
     if valid_submit_times:
         stat["最后提交时间"] = format_datetime(max(valid_submit_times))
-    stat["其他已交名单"] = sorted(other_submitted)
-    stat["其他后缀格式无效名单"] = sorted(other_invalid)
+    stat["其他已提交名单"] = sorted(other_submitted)
+    stat["其他后缀无效名单"] = sorted(other_invalid)
     stat["其他已补交名单"] = sorted(other_late_submitted)
     stat["汇总"] = {
         "应交总人数": total_expected,
-        "截止已交总人数": total_cutoff_submitted,
+        "截止已提交总人数": total_cutoff_submitted,
         "已补交总人数": total_late_submitted,
-        "已交总人数": total_submitted,
-        "未交总人数": total_expected - total_submitted,
+        "已提交总人数": total_submitted,
+        "未提交总人数": total_expected - total_submitted,
         "总提交率": round((total_submitted / total_expected) if total_expected else 0, 4),
-        "后缀格式无效总人数": total_invalid + len(other_invalid),
+        "后缀无效总人数": total_invalid + len(other_invalid),
     }
     stat["提交内容统计"] = content_stats
-    stat["后缀格式无效"] = build_invalid_suffix_summary(stat)
+    stat["后缀无效"] = build_invalid_suffix_summary(stat)
     return stat

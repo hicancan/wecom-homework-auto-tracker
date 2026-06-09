@@ -166,9 +166,9 @@ export function CollectionPage() {
   const summary = submissionData?.汇总
   const allowMakeup = submissionData?.允许补交 === true
   const expected = summary?.应交总人数 || 0
-  const submitted = summary?.已交总人数 || 0
+  const submitted = summary?.已提交总人数 || 0
   const late = allowMakeup ? summary?.已补交总人数 || 0 : 0
-  const invalid = summary?.后缀格式无效总人数 || 0
+  const invalid = summary?.后缀无效总人数 || 0
   const rate = summary?.总提交率 || 0
   const segments = buildStatusSegments(expected, submitted, late, invalid)
   const status = selectedCollection?.状态 || collectionIndex?.状态 || submissionData?.状态 || 'active'
@@ -286,14 +286,14 @@ export function CollectionPage() {
             <section className="grid gap-5 lg:grid-cols-[1fr_320px]">
               <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-5">
                 <p className="text-sm font-semibold text-emerald-700">
-                  {allowMakeup ? '应交 / 已接收 / 未交' : '应交 / 截止提交 / 未交'}
+                  {allowMakeup ? '应交 / 已提交 / 未提交' : '应交 / 截止提交 / 未提交'}
                 </p>
                 <p className="mt-3 text-4xl font-bold text-slate-900">
-                  {expected} / {submitted} / {summary?.未交总人数 ?? 0}
+                  {expected} / {submitted} / {summary?.未提交总人数 ?? 0}
                 </p>
                 <p className="mt-2 text-sm text-slate-600">
-                  截止内 {summary?.截止已交总人数 ?? submitted - late}
-                  {allowMakeup ? `，补交 ${late}` : ''}，后缀格式无效 {invalid}
+                  截止内 {summary?.截止已提交总人数 ?? submitted - late}
+                  {allowMakeup ? `，已补交 ${late}` : ''}，后缀无效 {invalid}
                 </p>
                 <div className="mt-5">
                   <StatusProgressBar segments={segments} />
@@ -314,9 +314,9 @@ export function CollectionPage() {
                 <ClassStatusCard key={className} className={className} stat={stat} allowMakeup={allowMakeup} />
               ))}
               <OtherStatusCard
-                submitted={submissionData?.其他已交名单 || []}
+                submitted={submissionData?.其他已提交名单 || []}
                 late={submissionData?.其他已补交名单 || []}
-                invalid={submissionData?.其他后缀格式无效名单 || []}
+                invalid={submissionData?.其他后缀无效名单 || []}
                 allowMakeup={allowMakeup}
               />
             </section>

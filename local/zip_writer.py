@@ -76,6 +76,6 @@ def write_submission_reports(
     stats_dir.mkdir(parents=True, exist_ok=True)
     token = sanitize_filename_component(submission_label)
     (stats_dir / f"{token}.json").write_text(dump_json(stat), encoding="utf-8")
-    invalid = stat.get("后缀格式无效", {})
+    invalid = stat.get("后缀无效", {})
     if int(invalid.get("总人数", 0) or 0) > 0:
         (stats_dir / f"{token}.invalid_suffix.json").write_text(dump_json(invalid), encoding="utf-8")

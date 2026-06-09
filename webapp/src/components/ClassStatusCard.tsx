@@ -15,9 +15,9 @@ type StudentRecord = {
 
 const tones = {
   submitted: { label: '已提交', className: 'border-emerald-200 bg-emerald-50 text-emerald-800' },
-  late: { label: '补交', className: 'border-sky-200 bg-sky-50 text-sky-800' },
-  invalid: { label: '后缀格式无效', className: 'border-amber-200 bg-amber-50 text-amber-800' },
-  unmet: { label: '未交', className: 'border-rose-200 bg-rose-50 text-rose-800' },
+  late: { label: '已补交', className: 'border-sky-200 bg-sky-50 text-sky-800' },
+  invalid: { label: '后缀无效', className: 'border-amber-200 bg-amber-50 text-amber-800' },
+  unmet: { label: '未提交', className: 'border-rose-200 bg-rose-50 text-rose-800' },
 } satisfies Record<string, Tone>
 
 function addRecords(records: StudentRecord[], values: string[] | undefined, tone: Tone, seen: Set<string>) {
@@ -32,10 +32,10 @@ function addRecords(records: StudentRecord[], values: string[] | undefined, tone
 function buildClassRecords(stat: ClassStat, allowMakeup: boolean): StudentRecord[] {
   const records: StudentRecord[] = []
   const seen = new Set<string>()
-  addRecords(records, stat.截止已交名单 || stat.已交名单, tones.submitted, seen)
+  addRecords(records, stat.截止已提交名单 || stat.已提交名单, tones.submitted, seen)
   if (allowMakeup) addRecords(records, stat.已补交名单, tones.late, seen)
-  addRecords(records, stat.后缀格式无效名单, tones.invalid, seen)
-  addRecords(records, stat.未交名单, tones.unmet, seen)
+  addRecords(records, stat.后缀无效名单, tones.invalid, seen)
+  addRecords(records, stat.未提交名单, tones.unmet, seen)
   return records.sort((a, b) => a.studentNo.localeCompare(b.studentNo))
 }
 
@@ -43,9 +43,9 @@ export function ClassStatusCard({ className, stat, allowMakeup }: { className: s
   const records = buildClassRecords(stat, allowMakeup)
   const segments = buildStatusSegments(
     stat.应交人数,
-    stat.已交人数,
+    stat.已提交人数,
     allowMakeup ? stat.已补交人数 || 0 : 0,
-    stat.后缀格式无效人数 || 0,
+    stat.后缀无效人数 || 0,
   )
 
   return (
@@ -54,7 +54,7 @@ export function ClassStatusCard({ className, stat, allowMakeup }: { className: s
         <div>
           <h3 className="text-lg font-bold text-slate-900">{className}</h3>
           <p className="mt-1 text-sm text-slate-500">
-            应交 {stat.应交人数} / {allowMakeup ? '已接收' : '截止提交'} {stat.已交人数} / 未交 {stat.未交人数}
+            应交 {stat.应交人数} / {allowMakeup ? '已提交' : '截止提交'} {stat.已提交人数} / 未提交 {stat.未提交人数}
           </p>
         </div>
         <div className="text-right text-sm font-semibold text-slate-700">{(stat.提交率 * 100).toFixed(2)}%</div>

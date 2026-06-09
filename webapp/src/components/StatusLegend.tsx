@@ -1,10 +1,10 @@
 const items = [
   ['已提交', 'bg-emerald-500'],
-  ['后缀格式无效', 'bg-amber-500'],
-  ['未交', 'bg-rose-500'],
+  ['后缀无效', 'bg-amber-500'],
+  ['未提交', 'bg-rose-500'],
 ] as const
 
-const makeupItem = ['补交', 'bg-sky-500'] as const
+const makeupItem = ['已补交', 'bg-sky-500'] as const
 
 export function StatusLegend({ allowMakeup }: { allowMakeup: boolean }) {
   const visibleItems = allowMakeup ? [items[0], makeupItem, ...items.slice(1)] : items
