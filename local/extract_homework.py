@@ -17,7 +17,7 @@ from course_manifest import rebuild_course_manifest
 
 TITLE_RE = re.compile(r"^(?P<topic>.+?)\[(?P<audience>[^\[\]]+)\](?:\[(?P<period>[^\[\]]+)\])?$")
 CONTENT_RE = re.compile(r"^(?P<name>.+?)\((?P<exts>\.[A-Za-z0-9]+(?:/\.[A-Za-z0-9]+)*)\)$")
-ARCHIVE_SCHEMA_VERSION = 1
+ARCHIVE_SCHEMA_VERSION = 2
 
 
 def now_text() -> str:
@@ -144,8 +144,6 @@ def parse_datetime_text(value: Any) -> pd.Timestamp | None:
 
 def entry_time_within_cutoff(entry: dict[str, Any], cutoff: pd.Timestamp | None) -> bool:
     if cutoff is None:
-        return True
-    if entry.get("本地归档基线") or "legacy archive baseline" in str(entry.get("备注", "")):
         return True
     ts = parse_datetime_text(entry.get("提交时间"))
     if ts is None:
@@ -474,14 +472,165 @@ def build_output_filename(student: dict[str, str], ext: str) -> str:
     return sanitize_filename_component(f"{student['学号']}{student['姓名']}{ext}")
 
 
+def archive_version_id(entry_data: dict[str, Any]) -> str:
+    seed = "|".join(
+        [
+            str(entry_data.get("学号", "")),
+            str(entry_data.get("提交序号", "")),
+            str(entry_data.get("提交内容", "")),
+            str(entry_data.get("提交时间", "")),
+            str(entry_data.get("源附件名", "")),
+            str(entry_data.get("状态", "")),
+            str(entry_data.get("sha256") or entry_data.get("hash") or ""),
+            str(entry_data.get("原因", "")),
+        ]
+    )
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
+
+
+def archive_entry_token(entry_id: str) -> str:
+    digest = hashlib.sha256(entry_id.encode("utf-8")).hexdigest()[:16]
+    readable = sanitize_filename_component(entry_id.replace("|", "_"))[:80]
+    return f"{readable}-{digest}" if readable else digest
+
+
+def archive_version_token(version: dict[str, Any]) -> str:
+    timestamp = re.sub(r"[^0-9]", "", str(version.get("提交时间", ""))) or "unknown-time"
+    return f"{timestamp}-{str(version.get('id', archive_version_id(version)))[:12]}"
+
+
+def immutable_version_path(course_out_dir: Path, entry_id: str, version: dict[str, Any], filename: str) -> Path:
+    return (
+        course_out_dir
+        / "files"
+        / "_versions"
+        / archive_entry_token(entry_id)
+        / archive_version_token(version)
+        / sanitize_filename_component(filename)
+    )
+
+
+def base_entry_from_data(entry_id: str, data: dict[str, Any], meta: dict[str, str]) -> dict[str, Any]:
+    return {
+        "id": entry_id,
+        "课程": meta["课程"],
+        "主题": meta["主题"],
+        "对象": meta["对象"],
+        "周期": meta["周期"],
+        "学号": str(data.get("学号", "")).strip(),
+        "姓名": str(data.get("姓名") or data.get("学生") or "").strip(),
+        "班级": str(data.get("班级", "")).strip(),
+        "提交序号": str(data.get("提交序号", "")).strip(),
+        "提交内容": str(data.get("提交内容", "")).strip(),
+        "提交内容名": str(data.get("提交内容名", "")).strip(),
+        "允许后缀": list(data.get("允许后缀", [])),
+        "versions": [],
+    }
+
+
+def version_from_data(data: dict[str, Any], *, source: str, archive_origin: str = "excel_sync") -> dict[str, Any]:
+    status = str(data.get("状态", "")).strip() or "missing"
+    version = {
+        "状态": status,
+        "原因": str(data.get("原因", "")).strip(),
+        "提交时间": str(data.get("提交时间", "")).strip(),
+        "源附件名": str(data.get("源附件名", "")).strip(),
+        "用户类型": str(data.get("用户类型", "")).strip(),
+        "文件相对路径": str(data.get("文件相对路径") or data.get("文件路径") or "").strip().replace("\\", "/"),
+        "文件大小": data.get("文件大小", data.get("大小", 0)),
+        "sha256": str(data.get("sha256") or data.get("hash") or "").strip(),
+        "归档更新时间": str(data.get("归档更新时间") or now_text()).strip(),
+        "归档来源": archive_origin,
+        "版本来源": source,
+    }
+    if data.get("源附件缺失但保留归档"):
+        version["源附件缺失但保留归档"] = True
+    version["id"] = archive_version_id({**data, **version})
+    return version
+
+
+def merged_entry_version(entry: dict[str, Any], version: dict[str, Any]) -> dict[str, Any]:
+    merged = {k: v for k, v in entry.items() if k != "versions"}
+    merged.update(version)
+    return merged
+
+
+def version_sort_key(version: dict[str, Any]) -> tuple[pd.Timestamp, str]:
+    ts = parse_datetime_text(version.get("提交时间"))
+    return (ts if ts is not None else pd.Timestamp.min, str(version.get("id", "")))
+
+
+def update_entry_latest_fields(entry: dict[str, Any], version: dict[str, Any]) -> None:
+    for key in [
+        "状态",
+        "原因",
+        "提交时间",
+        "源附件名",
+        "用户类型",
+        "文件相对路径",
+        "文件大小",
+        "sha256",
+        "归档更新时间",
+        "归档来源",
+        "版本来源",
+    ]:
+        if key in version:
+            entry[key] = version[key]
+    entry["最新版本"] = version.get("id", "")
+
+
+def append_archive_version(entry: dict[str, Any], version: dict[str, Any]) -> None:
+    versions = entry.setdefault("versions", [])
+    if not isinstance(versions, list):
+        raise ValueError(f"归档版本列表无效: {entry.get('id')}")
+    existing_index = next((idx for idx, item in enumerate(versions) if item.get("id") == version.get("id")), None)
+    if existing_index is None:
+        versions.append(version)
+    else:
+        versions[existing_index] = {**versions[existing_index], **version}
+    versions.sort(key=version_sort_key)
+    update_entry_latest_fields(entry, versions[-1])
+
+
+def active_version_file_exists(course_out_dir: Path, version: dict[str, Any]) -> bool:
+    if version.get("状态") != "active":
+        return False
+    rel = str(version.get("文件相对路径", "")).strip()
+    return bool(rel) and (course_out_dir / rel).is_file()
+
+
+def has_active_archived_file(entry: dict[str, Any], course_out_dir: Path) -> bool:
+    return any(active_version_file_exists(course_out_dir, version) for version in entry.get("versions", []))
+
+
+def ensure_version_file(
+    course_out_dir: Path,
+    entry_id: str,
+    version: dict[str, Any],
+    source_path: Path,
+    output_filename: str,
+) -> None:
+    target = immutable_version_path(course_out_dir, entry_id, version, output_filename)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if not target.exists():
+        shutil.copy2(source_path, target)
+    version["文件相对路径"] = str(target.relative_to(course_out_dir)).replace("\\", "/")
+    version["文件大小"] = target.stat().st_size
+    version["sha256"] = hash_file(target)
+
+
 def load_archive_manifest(archive_path: Path, meta: dict[str, str]) -> dict[str, Any]:
     if archive_path.exists():
         data = json.loads(archive_path.read_text(encoding="utf-8"))
-        if data.get("schema_version") != ARCHIVE_SCHEMA_VERSION:
+        schema_version = data.get("schema_version")
+        if schema_version != ARCHIVE_SCHEMA_VERSION:
             raise ValueError(f"归档 manifest 版本不支持: {archive_path}")
         entries = data.get("entries")
         if not isinstance(entries, dict):
             raise ValueError(f"归档 manifest entries 无效: {archive_path}")
+        for entry_id, entry in entries.items():
+            if not isinstance(entry, dict) or not isinstance(entry.get("versions"), list):
+                raise ValueError(f"归档 manifest entry 缺少 versions: {archive_path} -> {entry_id}")
         return data
     return {
         "schema_version": ARCHIVE_SCHEMA_VERSION,
@@ -553,22 +702,15 @@ def upsert_active_file(
     entry_data: dict[str, Any],
 ) -> None:
     existing = manifest["entries"].get(entry_id)
-    if existing and existing.get("状态") == "active":
-        existing_rel = str(existing.get("文件相对路径", ""))
-        if existing_rel and (course_out_dir / existing_rel).resolve() != destination_path.resolve():
-            retire_existing_active_file(course_out_dir, existing)
+    entry = existing if isinstance(existing, dict) else base_entry_from_data(entry_id, entry_data, manifest)
+    version = version_from_data({**entry_data, "状态": "active"}, source="excel_sync")
+    ensure_version_file(course_out_dir, entry_id, version, source_path, destination_path.name)
     destination_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source_path, destination_path)
-    entry_data.update(
-        {
-            "状态": "active",
-            "文件相对路径": str(destination_path.relative_to(course_out_dir)).replace("\\", "/"),
-            "文件大小": destination_path.stat().st_size,
-            "sha256": hash_file(destination_path),
-            "归档更新时间": now_text(),
-        }
-    )
-    manifest["entries"][entry_id] = entry_data
+    version_source = course_out_dir / str(version["文件相对路径"])
+    if not destination_path.exists() or hash_file(destination_path) != version["sha256"]:
+        shutil.copy2(version_source, destination_path)
+    append_archive_version(entry, version)
+    manifest["entries"][entry_id] = entry
 
 
 def set_non_active_status(
@@ -580,13 +722,18 @@ def set_non_active_status(
     reason: str,
 ) -> None:
     existing = manifest["entries"].get(entry_id)
-    if existing and existing.get("状态") == "active":
-        retire_existing_active_file(course_out_dir, existing)
-        entry_data["历史文件"] = existing.get("历史文件", [])
-    entry_data["状态"] = status
-    entry_data["原因"] = reason
-    entry_data["归档更新时间"] = now_text()
-    manifest["entries"][entry_id] = entry_data
+    entry = existing if isinstance(existing, dict) else base_entry_from_data(entry_id, entry_data, manifest)
+    version = version_from_data(
+        {
+            **entry_data,
+            "状态": status,
+            "原因": reason,
+            "归档更新时间": now_text(),
+        },
+        source="excel_sync",
+    )
+    append_archive_version(entry, version)
+    manifest["entries"][entry_id] = entry
 
 
 def latest_rows_by_key(df: pd.DataFrame) -> pd.DataFrame:
@@ -609,25 +756,14 @@ def merge_incremental_archive(
     duplicate_lookup: dict[str, list[str]],
     students_by_name: dict[str, dict[str, str]],
     other_students_by_name: dict[str, dict[str, str]],
-    submission_cutoffs: dict[str, pd.Timestamp],
 ) -> dict[str, Any]:
     archive_path = course_out_dir / "archive_manifest.json"
     manifest = load_archive_manifest(archive_path, meta)
     selected_set = set(selected_labels)
     selected_df = df[df["_submission_label"].isin(selected_set)].copy()
-    if submission_cutoffs:
-        selected_df = selected_df[
-            selected_df.apply(
-                lambda row: (
-                    row["_submission_label"] not in submission_cutoffs
-                    or row["_record_time"] <= submission_cutoffs[row["_submission_label"]]
-                ),
-                axis=1,
-            )
-        ]
-    latest = latest_rows_by_key(selected_df)
+    selected_df = selected_df.sort_values(by="_record_time")
 
-    for _, row in latest.iterrows():
+    for _, row in selected_df.iterrows():
         name_norm = row["_name_norm"]
         student = students_by_name.get(name_norm) or other_students_by_name.get(name_norm)
         if student is None:
@@ -639,6 +775,11 @@ def merge_incremental_archive(
         content_label = str(row["_content_label"])
         entry_id = archive_entry_id(student["学号"], submission_label, content_label)
         base_entry = {
+            "id": entry_id,
+            "课程": meta["课程"],
+            "主题": meta["主题"],
+            "对象": meta["对象"],
+            "周期": meta["周期"],
             "学号": student["学号"],
             "姓名": student["姓名"],
             "班级": student["班级"],
@@ -673,18 +814,11 @@ def merge_incremental_archive(
 
         source_filename = attachment_lookup.get(file_key, "")
         existing = manifest["entries"].get(entry_id)
-        existing_rel = str(existing.get("文件相对路径", "")) if isinstance(existing, dict) else ""
-        existing_path = course_out_dir / existing_rel if existing_rel else Path()
         if not source_filename:
-            if existing and existing.get("状态") == "active" and existing_path.exists():
-                existing.update(
-                    {
-                        **base_entry,
-                        "状态": "active",
-                        "源附件缺失但保留归档": True,
-                        "归档更新时间": now_text(),
-                    }
-                )
+            if isinstance(existing, dict) and has_active_archived_file(existing, course_out_dir):
+                for version in existing.get("versions", []):
+                    if active_version_file_exists(course_out_dir, version):
+                        version["源附件缺失但保留归档"] = True
                 manifest["entries"][entry_id] = existing
             else:
                 set_non_active_status(manifest, course_out_dir, entry_id, base_entry, "missing", "本地同步目录未找到附件")
@@ -692,15 +826,10 @@ def merge_incremental_archive(
 
         source_path = attachments_dir / source_filename
         if not source_path.exists():
-            if existing and existing.get("状态") == "active" and existing_path.exists():
-                existing.update(
-                    {
-                        **base_entry,
-                        "状态": "active",
-                        "源附件缺失但保留归档": True,
-                        "归档更新时间": now_text(),
-                    }
-                )
+            if isinstance(existing, dict) and has_active_archived_file(existing, course_out_dir):
+                for version in existing.get("versions", []):
+                    if active_version_file_exists(course_out_dir, version):
+                        version["源附件缺失但保留归档"] = True
                 manifest["entries"][entry_id] = existing
             else:
                 set_non_active_status(manifest, course_out_dir, entry_id, base_entry, "missing", "源附件路径不存在")
@@ -741,9 +870,40 @@ def active_entry_for(
     cutoff: pd.Timestamp | None = None,
 ) -> dict[str, Any] | None:
     entry = manifest.get("entries", {}).get(archive_entry_id(student_no, submission_label, content_label))
-    if isinstance(entry, dict) and entry_time_within_cutoff(entry, cutoff):
-        return entry
-    return None
+    if not isinstance(entry, dict):
+        return None
+    versions = [
+        version
+        for version in entry.get("versions", [])
+        if isinstance(version, dict) and entry_time_within_cutoff(version, cutoff)
+    ]
+    if not versions:
+        return None
+    return merged_entry_version(entry, sorted(versions, key=version_sort_key)[-1])
+
+
+def latest_version_after_cutoff(
+    manifest: dict[str, Any],
+    student_no: str,
+    submission_label: str,
+    content_label: str,
+    cutoff: pd.Timestamp | None,
+) -> dict[str, Any] | None:
+    if cutoff is None:
+        return None
+    entry = manifest.get("entries", {}).get(archive_entry_id(student_no, submission_label, content_label))
+    if not isinstance(entry, dict):
+        return None
+    versions = []
+    for version in entry.get("versions", []):
+        if not isinstance(version, dict):
+            continue
+        ts = parse_datetime_text(version.get("提交时间"))
+        if ts is not None and ts > cutoff:
+            versions.append(version)
+    if not versions:
+        return None
+    return merged_entry_version(entry, sorted(versions, key=version_sort_key)[-1])
 
 
 def load_existing_submission_cutoffs(web_data_root: Path, meta: dict[str, str]) -> dict[str, pd.Timestamp]:
@@ -753,10 +913,13 @@ def load_existing_submission_cutoffs(web_data_root: Path, meta: dict[str, str]) 
         return {}
     index_data = read_json_object(index_path)
     cutoffs: dict[str, pd.Timestamp] = {}
-    for item in index_data.get("作业列表", []):
+    submission_refs = index_data.get("提交序号列表", [])
+    if not isinstance(submission_refs, list):
+        raise ValueError(f"收集表索引缺少提交序号列表: {index_path}")
+    for item in submission_refs:
         if not isinstance(item, dict):
             continue
-        label = str(item.get("作业", "")).strip()
+        label = str(item.get("提交序号", "")).strip()
         data_file = str(item.get("数据文件", "")).strip()
         if not label or not data_file:
             continue
@@ -768,6 +931,44 @@ def load_existing_submission_cutoffs(web_data_root: Path, meta: dict[str, str]) 
         cutoff = parse_datetime_text(stat.get("统计截止时间") or stat.get("最后提交时间"))
         if cutoff is not None:
             cutoffs[label] = cutoff
+    return cutoffs
+
+
+def latest_record_time_by_label(df: pd.DataFrame, label: str) -> pd.Timestamp:
+    selected = df[df["_submission_label"] == label]
+    if selected.empty:
+        raise ValueError(f"提交序号没有记录，无法确定截止时间: {label}")
+    latest = selected["_record_time"].max()
+    if pd.isna(latest):
+        raise ValueError(f"提交序号填写时间无效，无法确定截止时间: {label}")
+    return latest
+
+
+def resolve_submission_cutoffs(
+    *,
+    df: pd.DataFrame,
+    selected_labels: list[str],
+    published_cutoffs: dict[str, pd.Timestamp],
+    cutoff_policy: str,
+    manual_cutoffs: dict[str, pd.Timestamp],
+) -> dict[str, pd.Timestamp]:
+    if cutoff_policy not in {"keep", "advance", "manual"}:
+        raise ValueError(f"未知 cutoff policy: {cutoff_policy}")
+    cutoffs: dict[str, pd.Timestamp] = {}
+    for label in selected_labels:
+        if cutoff_policy == "manual":
+            cutoff = manual_cutoffs.get(label)
+            if cutoff is None:
+                raise ValueError(f"manual 模式缺少提交序号截止时间: {label}")
+            cutoffs[label] = cutoff
+            continue
+        if label in manual_cutoffs:
+            cutoffs[label] = manual_cutoffs[label]
+            continue
+        if cutoff_policy == "keep" and label in published_cutoffs:
+            cutoffs[label] = published_cutoffs[label]
+            continue
+        cutoffs[label] = latest_record_time_by_label(df, label)
     return cutoffs
 
 
@@ -819,12 +1020,12 @@ def make_submission_stat(
 
     content_stats: dict[str, Any] = {}
     stat: dict[str, Any] = {
-        "作业": submission_label,
         "课程": meta["课程"],
         "主题": meta["主题"],
         "对象": meta["对象"],
         "周期": meta["周期"],
         "状态": "active",
+        "提交序号": submission_label,
         "提交内容列表": content_labels,
         "最后提交时间": "",
         "统计截止时间": format_datetime(cutoff) if cutoff is not None else "",
@@ -832,6 +1033,7 @@ def make_submission_stat(
         "统计生成时间": now_text(),
         "总班级数": len(students_by_class),
         "班级统计": {},
+        "补交状态": {},
     }
 
     valid_submit_times: list[pd.Timestamp] = []
@@ -848,12 +1050,18 @@ def make_submission_stat(
         not_complete_students: list[str] = []
         class_missing_students: set[str] = set()
         class_invalid_students: set[str] = set()
+        class_late_complete_students: set[str] = set()
+        class_late_missing_students: set[str] = set()
+        class_late_invalid_students: set[str] = set()
 
         for content_label in content_labels:
             content_submitted: list[str] = []
             content_not_submitted: list[str] = []
             content_missing: list[str] = []
             content_invalid: list[str] = []
+            content_late_submitted: list[str] = []
+            content_late_missing: list[str] = []
+            content_late_invalid: list[str] = []
             for student in students:
                 entry = active_entry_for(manifest, student["学号"], submission_label, content_label, cutoff)
                 if entry and entry.get("状态") == "active":
@@ -869,6 +1077,13 @@ def make_submission_stat(
                     if entry and entry.get("状态") == "invalid":
                         content_invalid.append(student["学号"])
                         class_invalid_students.add(student["学号"])
+                    late_entry = latest_version_after_cutoff(manifest, student["学号"], submission_label, content_label, cutoff)
+                    if late_entry and late_entry.get("状态") == "active":
+                        content_late_submitted.append(student["学号"])
+                    elif late_entry and late_entry.get("状态") == "missing":
+                        content_late_missing.append(student["学号"])
+                    elif late_entry and late_entry.get("状态") == "invalid":
+                        content_late_invalid.append(student["学号"])
             content_stats[content_label]["班级统计"][class_name] = {
                 "应交人数": len(students),
                 "已交人数": len(content_submitted),
@@ -880,6 +1095,12 @@ def make_submission_stat(
                 "已交但附件缺失名单": sorted(content_missing),
                 "无效附件人数": len(content_invalid),
                 "无效附件名单": sorted(content_invalid),
+                "已补交人数": len(content_late_submitted),
+                "已补交名单": sorted(content_late_submitted),
+                "补交附件缺失人数": len(content_late_missing),
+                "补交附件缺失名单": sorted(content_late_missing),
+                "补交无效人数": len(content_late_invalid),
+                "补交无效名单": sorted(content_late_invalid),
             }
 
         for student in students:
@@ -891,6 +1112,16 @@ def make_submission_stat(
                 complete_students.append(student["学号"])
             else:
                 not_complete_students.append(student["学号"])
+                late_entries = [
+                    latest_version_after_cutoff(manifest, student["学号"], submission_label, content_label, cutoff)
+                    for content_label in content_labels
+                ]
+                if late_entries and all(entry and entry.get("状态") == "active" for entry in late_entries):
+                    class_late_complete_students.add(student["学号"])
+                elif any(entry and entry.get("状态") == "invalid" for entry in late_entries):
+                    class_late_invalid_students.add(student["学号"])
+                elif any(entry and entry.get("状态") == "missing" for entry in late_entries):
+                    class_late_missing_students.add(student["学号"])
 
         expected_count = len(students)
         submitted_count = len(complete_students)
@@ -909,6 +1140,17 @@ def make_submission_stat(
             "已交但附件缺失名单": sorted(class_missing_students),
             "无效附件人数": len(class_invalid_students),
             "无效附件名单": sorted(class_invalid_students),
+            "已补交人数": len(class_late_complete_students),
+            "已补交名单": sorted(class_late_complete_students),
+            "补交附件缺失人数": len(class_late_missing_students),
+            "补交附件缺失名单": sorted(class_late_missing_students),
+            "补交无效人数": len(class_late_invalid_students),
+            "补交无效名单": sorted(class_late_invalid_students),
+        }
+        stat["补交状态"][class_name] = {
+            "已补交名单": sorted(class_late_complete_students),
+            "补交无效名单": sorted(class_late_invalid_students),
+            "补交附件缺失名单": sorted(class_late_missing_students),
         }
 
     other_submitted: list[str] = []
@@ -960,13 +1202,17 @@ def active_entries_for_submission(
 ) -> list[dict[str, Any]]:
     entries = []
     for entry in manifest.get("entries", {}).values():
-        if (
-            isinstance(entry, dict)
-            and entry.get("提交序号") == submission_label
-            and entry.get("状态") == "active"
-            and entry_time_within_cutoff(entry, cutoff)
-        ):
-            entries.append(entry)
+        if not isinstance(entry, dict) or entry.get("提交序号") != submission_label:
+            continue
+        versions = [
+            version
+            for version in entry.get("versions", [])
+            if isinstance(version, dict)
+            and version.get("状态") == "active"
+            and entry_time_within_cutoff(version, cutoff)
+        ]
+        if versions:
+            entries.append(merged_entry_version(entry, sorted(versions, key=version_sort_key)[-1]))
     return sorted(entries, key=lambda item: (str(item.get("提交内容名", "")), str(item.get("班级", "")), str(item.get("学号", ""))))
 
 
@@ -1054,17 +1300,17 @@ def write_collection_web_data(
     web_data_root: Path,
     course_index_path: Path,
     meta: dict[str, str],
-    homework_stats: dict[str, dict[str, Any]],
+    submission_stats: dict[str, dict[str, Any]],
     ordered_labels: list[str],
 ) -> None:
     web_data_root.mkdir(parents=True, exist_ok=True)
     course_slug = sanitize_filename_component(meta["课程"])
     tokens = build_path_tokens(ordered_labels)
     keep_files: set[str] = set()
-    homework_refs: list[dict[str, Any]] = []
+    submission_refs: list[dict[str, Any]] = []
 
     for label in ordered_labels:
-        stat = homework_stats.get(label)
+        stat = submission_stats.get(label)
         if stat is None:
             continue
         token = tokens[label]
@@ -1073,9 +1319,9 @@ def write_collection_web_data(
         payload = dict(stat)
         payload["更新时间"] = now_text()
         (web_data_root / filename).write_text(dump_json(payload), encoding="utf-8")
-        homework_refs.append(
+        submission_refs.append(
             {
-                "作业": label,
+                "提交序号": label,
                 "数据文件": f"data/{filename}",
                 "提交内容列表": stat.get("提交内容列表", []),
             }
@@ -1090,7 +1336,7 @@ def write_collection_web_data(
         "周期": meta["周期"],
         "状态": "active",
         "更新时间": now_text(),
-        "作业列表": homework_refs,
+        "提交序号列表": submission_refs,
     }
     (web_data_root / index_filename).write_text(dump_json(index_payload), encoding="utf-8")
 
@@ -1109,6 +1355,8 @@ def process_collection(
     repo_root: Path,
     requested_labels: list[str],
     attachments_override: str,
+    cutoff_policy: str,
+    manual_cutoffs: dict[str, pd.Timestamp],
     cleanup_mode: str,
     cleanup_only: bool,
 ) -> dict[str, Any]:
@@ -1141,6 +1389,13 @@ def process_collection(
     course_out_dir = out_root / meta["课程"]
     course_out_dir.mkdir(parents=True, exist_ok=True)
     published_cutoffs = load_existing_submission_cutoffs(web_data_root, meta)
+    submission_cutoffs = resolve_submission_cutoffs(
+        df=df,
+        selected_labels=selected_labels,
+        published_cutoffs=published_cutoffs,
+        cutoff_policy=cutoff_policy,
+        manual_cutoffs=manual_cutoffs,
+    )
 
     if cleanup_only:
         if cleanup_mode == "off":
@@ -1167,14 +1422,13 @@ def process_collection(
         duplicate_lookup=duplicate_lookup,
         students_by_name=students_by_name,
         other_students_by_name=other_students_by_name,
-        submission_cutoffs=published_cutoffs,
     )
 
     stats: dict[str, dict[str, Any]] = {}
     zip_paths: list[str] = []
     for label in selected_labels:
         label_rows = df[df["_submission_label"] == label]
-        cutoff = published_cutoffs.get(label)
+        cutoff = submission_cutoffs.get(label)
         if cutoff is not None:
             label_rows = label_rows[label_rows["_record_time"] <= cutoff]
         content_labels = sorted(dict.fromkeys(label_rows["_content_label"].tolist()))
@@ -1225,7 +1479,7 @@ def process_collection(
         web_data_root=web_data_root,
         course_index_path=course_index_path,
         meta=meta,
-        homework_stats=stats,
+        submission_stats=stats,
         ordered_labels=selected_labels,
     )
     return summary
@@ -1242,6 +1496,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--label", action="append", dest="labels", default=[], help="要处理的提交序号，可多次指定")
     parser.add_argument("--all-labels", action="store_true", help="显式处理当前 Excel 的全部提交序号")
     parser.add_argument(
+        "--cutoff-policy",
+        choices=["keep", "advance", "manual"],
+        default="keep",
+        help="统计截止时间策略：keep 保留已发布截止，新提交序号用最新记录；advance 推进到最新记录；manual 使用 --cutoff",
+    )
+    parser.add_argument(
+        "--cutoff",
+        action="append",
+        default=[],
+        help="manual 截止时间，格式：提交序号=YYYY-MM-DD HH:MM:SS，可重复",
+    )
+    parser.add_argument(
         "--cleanup-source-attachments",
         choices=["off", "dry-run", "apply"],
         default="off",
@@ -1251,6 +1517,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--list-courses", action="store_true")
     parser.add_argument("--list-submission-labels", action="store_true")
     return parser.parse_args()
+
+
+def parse_manual_cutoffs(values: list[str]) -> dict[str, pd.Timestamp]:
+    cutoffs: dict[str, pd.Timestamp] = {}
+    for value in values:
+        if "=" not in value:
+            raise ValueError(f"--cutoff 必须符合 提交序号=YYYY-MM-DD HH:MM:SS: {value}")
+        label, raw_time = value.split("=", 1)
+        label = normalize_text(label)
+        cutoff = parse_datetime_text(raw_time)
+        if not label or cutoff is None:
+            raise ValueError(f"--cutoff 无效: {value}")
+        cutoffs[label] = cutoff
+    return cutoffs
 
 
 def pick_excel(args: argparse.Namespace, repo_root: Path, cfg: dict[str, Any]) -> tuple[str, Path]:
@@ -1299,6 +1579,8 @@ def main() -> None:
         repo_root=repo_root,
         requested_labels=requested_labels,
         attachments_override=args.attachments,
+        cutoff_policy=args.cutoff_policy,
+        manual_cutoffs=parse_manual_cutoffs(args.cutoff),
         cleanup_mode=args.cleanup_source_attachments,
         cleanup_only=args.cleanup_only,
     )

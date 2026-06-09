@@ -75,19 +75,19 @@ jobs:
               continue
             course_data["最后部署时间"] = deploy_time
             data_path.write_text(json.dumps(course_data, ensure_ascii=False, indent=2), encoding="utf-8")
-            for hw in course_data.get("作业列表", []):
-              hw_rel = hw.get("数据文件")
-              if not hw_rel:
+            for submission in course_data.get("提交序号列表", []):
+              submission_rel = submission.get("数据文件")
+              if not submission_rel:
                 continue
-              hw_path = Path("webapp/public") / hw_rel
-              if not hw_path.exists():
+              submission_path = Path("webapp/public") / submission_rel
+              if not submission_path.exists():
                 continue
               try:
-                hw_data = json.loads(hw_path.read_text(encoding="utf-8"))
+                submission_data = json.loads(submission_path.read_text(encoding="utf-8"))
               except json.JSONDecodeError:
                 continue
-              hw_data["最后部署时间"] = deploy_time
-              hw_path.write_text(json.dumps(hw_data, ensure_ascii=False, indent=2), encoding="utf-8")
+              submission_data["最后部署时间"] = deploy_time
+              submission_path.write_text(json.dumps(submission_data, ensure_ascii=False, indent=2), encoding="utf-8")
           PY
 
       - name: Build course manifest

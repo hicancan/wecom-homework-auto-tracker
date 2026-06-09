@@ -77,7 +77,7 @@ function Home() {
       <div className="mx-auto flex min-h-screen max-w-[1600px] flex-col px-4 py-12 md:px-8">
         <header className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm md:p-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h1 className="text-2xl font-bold md:text-4xl">课程作业追踪看板</h1>
+            <h1 className="text-2xl font-bold md:text-4xl">收集表追踪看板</h1>
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-end">
               <button
                 type="button"

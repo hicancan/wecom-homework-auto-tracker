@@ -17,6 +17,12 @@ type ClassStat = {
   未交名单: string[]
   已交但附件缺失人数?: number
   无效附件人数?: number
+  已补交人数?: number
+  已补交名单?: string[]
+  补交附件缺失人数?: number
+  补交附件缺失名单?: string[]
+  补交无效人数?: number
+  补交无效名单?: string[]
 }
 
 type ContentStatPayload = {
@@ -30,6 +36,7 @@ type ContentStatSummary = {
   未交人数: number
   附件缺失人数: number
   无效附件人数: number
+  已补交人数: number
   提交率: number
 }
 
@@ -39,13 +46,13 @@ type IssueSummary = {
   同步提示?: string
 }
 
-type HomeworkStat = {
-  作业: string
+type SubmissionStat = {
   课程: string
   主题?: string
   对象?: string
   周期?: string
   状态?: 'active' | 'archived'
+  提交序号: string
   提交内容列表?: string[]
   提交内容统计?: Record<string, ContentStatPayload> | ContentStatSummary[]
   更新时间?: string
@@ -64,23 +71,23 @@ type HomeworkStat = {
     无效附件总人数?: number
   }
   班级统计: Record<string, ClassStat>
+  补交状态?: Record<
+    string,
+    {
+      已补交名单?: string[]
+      补交无效名单?: string[]
+      补交附件缺失名单?: string[]
+    }
+  >
 }
 
-type IssueSection = {
-  title: string
-  count: number
-  description: string
-  classMap: Record<string, string[]>
-  tone: 'amber' | 'rose'
-}
-
-type CourseHomeworkRef = {
-  作业: string
+type CollectionSubmissionRef = {
+  提交序号: string
   数据文件: string
   提交内容列表?: string[]
 }
 
-type CourseHomeworkIndex = {
+type CollectionIndex = {
   课程: string
   主题?: string
   对象?: string
@@ -88,7 +95,7 @@ type CourseHomeworkIndex = {
   状态?: 'active' | 'archived'
   更新时间?: string
   最后部署时间?: string
-  作业列表: CourseHomeworkRef[]
+  提交序号列表: CollectionSubmissionRef[]
 }
 
 function clampRate(rate: number): number {
@@ -104,7 +111,7 @@ function extractStudentNo(raw: string): string {
   return match ? match[1] : text
 }
 
-function summarizeContentStats(value: HomeworkStat['提交内容统计']): ContentStatSummary[] {
+function summarizeContentStats(value: SubmissionStat['提交内容统计']): ContentStatSummary[] {
   if (!value) return []
   if (Array.isArray(value)) return value
 
@@ -117,9 +124,10 @@ function summarizeContentStats(value: HomeworkStat['提交内容统计']): Conte
         acc.missing += stat.未交人数 || 0
         acc.attachmentMissing += stat.已交但附件缺失人数 || 0
         acc.invalid += stat.无效附件人数 || 0
+        acc.late += stat.已补交人数 || 0
         return acc
       },
-      { expected: 0, submitted: 0, missing: 0, attachmentMissing: 0, invalid: 0 },
+      { expected: 0, submitted: 0, missing: 0, attachmentMissing: 0, invalid: 0, late: 0 },
     )
     return {
       提交内容: content,
@@ -128,6 +136,7 @@ function summarizeContentStats(value: HomeworkStat['提交内容统计']): Conte
       未交人数: totals.missing,
       附件缺失人数: totals.attachmentMissing,
       无效附件人数: totals.invalid,
+      已补交人数: totals.late,
       提交率: totals.expected ? totals.submitted / totals.expected : 0,
     }
   })
@@ -143,6 +152,23 @@ function safeDecodeURIComponent(value: string): string {
 
 function buildCoursePath(courseName: string): string {
   return `/course/${encodeURIComponent(courseName)}`
+}
+
+function studentListIncludes(list: string[] | undefined, studentNo: string): boolean {
+  return (list || []).some((item) => extractStudentNo(item) === studentNo)
+}
+
+function missingStudentTone(classStat: ClassStat, studentNo: string): { className: string; label: string } {
+  if (studentListIncludes(classStat.已补交名单, studentNo)) {
+    return { className: 'border-sky-200 bg-sky-50 text-sky-800', label: '已补交' }
+  }
+  if (studentListIncludes(classStat.补交无效名单, studentNo)) {
+    return { className: 'border-rose-200 bg-rose-50 text-rose-800', label: '补交无效' }
+  }
+  if (studentListIncludes(classStat.补交附件缺失名单, studentNo)) {
+    return { className: 'border-orange-200 bg-orange-50 text-orange-800', label: '附件缺失' }
+  }
+  return { className: 'border-amber-200 bg-amber-50 text-amber-800', label: '未交' }
 }
 
 type DonutProps = {
@@ -290,15 +316,16 @@ function App() {
   const { courseName = '' } = useParams()
   const [searchParams] = useSearchParams()
   const routeCourse = safeDecodeURIComponent(courseName)
-  const routeHomework = safeDecodeURIComponent(searchParams.get('hw') || '')
+  const routeSubmission = safeDecodeURIComponent(searchParams.get('seq') || '')
+  const hasLegacySubmissionParam = searchParams.has('hw')
   const publicBase = import.meta.env.BASE_URL || '/'
 
   const [manifestData, setManifestData] = useState<CourseManifest | null>(null)
   const [indexData, setIndexData] = useState<CourseIndex | null>(null)
-  const [courseHomeworkIndex, setCourseHomeworkIndex] = useState<CourseHomeworkIndex | null>(null)
-  const [selectedHomeworkData, setSelectedHomeworkData] = useState<HomeworkStat | null>(null)
+  const [collectionIndex, setCollectionIndex] = useState<CollectionIndex | null>(null)
+  const [selectedSubmissionData, setSelectedSubmissionData] = useState<SubmissionStat | null>(null)
   const [isCourseLoading, setIsCourseLoading] = useState(false)
-  const [isHomeworkLoading, setIsHomeworkLoading] = useState(false)
+  const [isSubmissionLoading, setIsSubmissionLoading] = useState(false)
   const [shareFeedback, setShareFeedback] = useState('')
   const [indexError, setIndexError] = useState('')
   const [courseError, setCourseError] = useState('')
@@ -349,11 +376,11 @@ function App() {
 
   useEffect(() => {
     if (!selectedCourse) {
-      setCourseHomeworkIndex(null)
-      setSelectedHomeworkData(null)
+      setCollectionIndex(null)
+      setSelectedSubmissionData(null)
       setCourseError('')
       setIsCourseLoading(false)
-      setIsHomeworkLoading(false)
+      setIsSubmissionLoading(false)
       return
     }
 
@@ -362,8 +389,8 @@ function App() {
 
     const controller = new AbortController()
     setIsCourseLoading(true)
-    setCourseHomeworkIndex(null)
-    setSelectedHomeworkData(null)
+    setCollectionIndex(null)
+    setSelectedSubmissionData(null)
     setCourseError('')
 
     fetch(buildVersionedJsonUrl(publicBase, item.数据文件, manifestData?.version), { signal: controller.signal })
@@ -371,17 +398,17 @@ function App() {
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`)
         }
-        return res.json() as Promise<CourseHomeworkIndex>
+        return res.json() as Promise<CollectionIndex>
       })
       .then((json) => {
         if (controller.signal.aborted) return
-        setCourseHomeworkIndex(json)
+        setCollectionIndex(json)
         setIsCourseLoading(false)
       })
       .catch((e: unknown) => {
         if (controller.signal.aborted) return
-        setCourseHomeworkIndex(null)
-        setSelectedHomeworkData(null)
+        setCollectionIndex(null)
+        setSelectedSubmissionData(null)
         setCourseError(e instanceof Error ? e.message : '收集表数据加载失败')
         setIsCourseLoading(false)
       })
@@ -389,87 +416,87 @@ function App() {
     return () => controller.abort()
   }, [courseMap, manifestData?.version, publicBase, selectedCourse])
 
-  const homeworkMap = useMemo(() => {
-    const map = new Map<string, CourseHomeworkRef>()
-    for (const item of courseHomeworkIndex?.作业列表 || []) {
-      map.set(item.作业, item)
+  const submissionMap = useMemo(() => {
+    const map = new Map<string, CollectionSubmissionRef>()
+    for (const item of collectionIndex?.提交序号列表 || []) {
+      map.set(item.提交序号, item)
     }
     return map
-  }, [courseHomeworkIndex])
+  }, [collectionIndex])
 
-  const homeworkKeys = useMemo(() => {
+  const submissionKeys = useMemo(() => {
     const keys: string[] = []
     const seen = new Set<string>()
-    for (const item of courseHomeworkIndex?.作业列表 || []) {
-      if (seen.has(item.作业)) continue
-      seen.add(item.作业)
-      keys.push(item.作业)
+    for (const item of collectionIndex?.提交序号列表 || []) {
+      if (seen.has(item.提交序号)) continue
+      seen.add(item.提交序号)
+      keys.push(item.提交序号)
     }
     return keys
-  }, [courseHomeworkIndex])
+  }, [collectionIndex])
 
   const selectedKey = useMemo(() => {
-    if (!homeworkKeys.length) return ''
-    if (routeHomework && homeworkKeys.includes(routeHomework)) {
-      return routeHomework
+    if (!submissionKeys.length) return ''
+    if (routeSubmission && submissionKeys.includes(routeSubmission)) {
+      return routeSubmission
     }
-    return homeworkKeys[homeworkKeys.length - 1]
-  }, [homeworkKeys, routeHomework])
+    return submissionKeys[submissionKeys.length - 1]
+  }, [submissionKeys, routeSubmission])
 
   useEffect(() => {
     if (!selectedCourse || !selectedKey) {
-      setSelectedHomeworkData(null)
-      setIsHomeworkLoading(false)
+      setSelectedSubmissionData(null)
+      setIsSubmissionLoading(false)
       return
     }
 
-    const homeworkRef = homeworkMap.get(selectedKey)
-    if (!homeworkRef) {
-      setSelectedHomeworkData(null)
-      setIsHomeworkLoading(false)
+    const submissionRef = submissionMap.get(selectedKey)
+    if (!submissionRef) {
+      setSelectedSubmissionData(null)
+      setIsSubmissionLoading(false)
       return
     }
 
     const controller = new AbortController()
-    setIsHomeworkLoading(true)
-    setSelectedHomeworkData(null)
+    setIsSubmissionLoading(true)
+    setSelectedSubmissionData(null)
     setCourseError('')
 
-    fetch(buildVersionedJsonUrl(publicBase, homeworkRef.数据文件, manifestData?.version), {
+    fetch(buildVersionedJsonUrl(publicBase, submissionRef.数据文件, manifestData?.version), {
       signal: controller.signal,
     })
       .then((res) => {
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`)
         }
-        return res.json() as Promise<HomeworkStat>
+        return res.json() as Promise<SubmissionStat>
       })
       .then((json) => {
         if (controller.signal.aborted) return
-        setSelectedHomeworkData(json)
-        setIsHomeworkLoading(false)
+        setSelectedSubmissionData(json)
+        setIsSubmissionLoading(false)
       })
       .catch((e: unknown) => {
         if (controller.signal.aborted) return
-        setSelectedHomeworkData(null)
+        setSelectedSubmissionData(null)
         setCourseError(e instanceof Error ? e.message : '提交数据加载失败')
-        setIsHomeworkLoading(false)
+        setIsSubmissionLoading(false)
       })
 
     return () => controller.abort()
-  }, [homeworkMap, manifestData?.version, publicBase, selectedCourse, selectedKey])
+  }, [manifestData?.version, publicBase, selectedCourse, selectedKey, submissionMap])
 
   useEffect(() => {
-    if (!selectedCourse || !courseHomeworkIndex || courseHomeworkIndex.课程 !== selectedCourse) return
+    if (!selectedCourse || !collectionIndex || collectionIndex.课程 !== selectedCourse || hasLegacySubmissionParam) return
     const nextPathname = buildCoursePath(selectedCourse)
     const nextSearchParams = new URLSearchParams()
     if (selectedKey) {
-      nextSearchParams.set('hw', selectedKey)
+      nextSearchParams.set('seq', selectedKey)
     }
     const nextSearch = nextSearchParams.toString()
-    const currentHomework = routeHomework || ''
+    const currentSubmission = routeSubmission || ''
 
-    if (routeCourse !== selectedCourse || currentHomework !== selectedKey || searchParams.toString() !== nextSearch) {
+    if (routeCourse !== selectedCourse || currentSubmission !== selectedKey || searchParams.toString() !== nextSearch) {
       navigate(
         {
           pathname: nextPathname,
@@ -478,17 +505,18 @@ function App() {
         { replace: true },
       )
     }
-  }, [courseHomeworkIndex, navigate, routeCourse, routeHomework, searchParams, selectedCourse, selectedKey])
+  }, [collectionIndex, hasLegacySubmissionParam, navigate, routeCourse, routeSubmission, searchParams, selectedCourse, selectedKey])
 
   const routeError = useMemo(() => {
     if (!indexData) return ''
     if (!routeCourse) return '路由缺少收集表参数，请使用分享链接进入。'
     if (!courseMap.has(routeCourse)) return `收集表参数无效：${routeCourse}`
-    if (routeHomework && courseHomeworkIndex && !homeworkMap.has(routeHomework)) {
-      return `提交序号参数无效：${routeHomework}`
+    if (hasLegacySubmissionParam) return '旧 hw 参数已无效，请使用 seq 参数访问提交序号。'
+    if (routeSubmission && collectionIndex && !submissionMap.has(routeSubmission)) {
+      return `提交序号参数无效：${routeSubmission}`
     }
     return ''
-  }, [courseHomeworkIndex, courseMap, homeworkMap, indexData, routeCourse, routeHomework])
+  }, [collectionIndex, courseMap, hasLegacySubmissionParam, indexData, routeCourse, routeSubmission, submissionMap])
 
   const error = indexError || courseError
 
@@ -506,11 +534,11 @@ function App() {
     }
   }
 
-  const selected = selectedHomeworkData
-  const selectedHomeworkRef = selectedKey ? homeworkMap.get(selectedKey) || null : null
+  const selected = routeError ? null : selectedSubmissionData
+  const selectedSubmissionRef = !routeError && selectedKey ? submissionMap.get(selectedKey) || null : null
   const selectedContentList = selected?.提交内容列表?.length
     ? selected.提交内容列表
-    : selectedHomeworkRef?.提交内容列表 || []
+    : selectedSubmissionRef?.提交内容列表 || []
   const contentSummaries = useMemo(() => summarizeContentStats(selected?.提交内容统计), [selected])
 
   const courseList = useMemo(() => {
@@ -526,35 +554,6 @@ function App() {
   const otherSubmittedList = useMemo(() => {
     if (!selected?.其他已交名单?.length) return []
     return selected.其他已交名单.map((studentNo) => extractStudentNo(studentNo))
-  }, [selected])
-
-  const issueSections = useMemo(() => {
-    if (!selected) return [] as IssueSection[]
-    const sections: IssueSection[] = []
-    const missingAttachment = selected.附件缺失
-    const invalidAttachment = selected.无效附件
-
-    if ((missingAttachment?.总人数 || 0) > 0) {
-      sections.push({
-        title: '本地附件缺失',
-        count: missingAttachment?.总人数 || 0,
-        description: 'Excel 有提交记录，但本地同步目录和本地归档中没有找到这个键对应的附件，因此不计入已交。',
-        classMap: missingAttachment?.班级统计 || {},
-        tone: 'amber',
-      })
-    }
-
-    if ((invalidAttachment?.总人数 || 0) > 0) {
-      sections.push({
-        title: '无效附件',
-        count: invalidAttachment?.总人数 || 0,
-        description: '最新上传文件的后缀不符合“提交内容”括号内允许的后缀契约，因此不计入已交。',
-        classMap: invalidAttachment?.班级统计 || {},
-        tone: 'rose',
-      })
-    }
-
-    return sections
   }, [selected])
 
   const aggregate = useMemo(() => {
@@ -574,25 +573,25 @@ function App() {
   const summarySubmitted = aggregate.submitted
   const summaryMissing = aggregate.missing
   const summaryRate = aggregateRate
-  const courseTopic = selectedCourseItem?.主题 || courseHomeworkIndex?.主题 || selectedHomeworkData?.主题 || '提交追踪看板'
-  const courseAudience = selectedCourseItem?.对象 || courseHomeworkIndex?.对象 || selectedHomeworkData?.对象 || ''
-  const coursePeriod = selectedCourseItem?.周期 || courseHomeworkIndex?.周期 || selectedHomeworkData?.周期 || ''
-  const courseStatus = selectedCourseItem?.状态 || courseHomeworkIndex?.状态 || selectedHomeworkData?.状态 || 'active'
+  const courseTopic = selectedCourseItem?.主题 || collectionIndex?.主题 || selectedSubmissionData?.主题 || '提交追踪看板'
+  const courseAudience = selectedCourseItem?.对象 || collectionIndex?.对象 || selectedSubmissionData?.对象 || ''
+  const coursePeriod = selectedCourseItem?.周期 || collectionIndex?.周期 || selectedSubmissionData?.周期 || ''
+  const courseStatus = selectedCourseItem?.状态 || collectionIndex?.状态 || selectedSubmissionData?.状态 || 'active'
   const isArchivedCourse = courseStatus === 'archived'
-  const hasCourseMeta = !!selectedCourseItem || !!courseHomeworkIndex || !!selectedHomeworkData
+  const hasCourseMeta = !!selectedCourseItem || !!collectionIndex || !!selectedSubmissionData
 
   const deployTime =
-    selectedHomeworkData?.最后部署时间 ||
-    courseHomeworkIndex?.最后部署时间 ||
+    selectedSubmissionData?.最后部署时间 ||
+    collectionIndex?.最后部署时间 ||
     manifestData?.最后部署时间 ||
     indexData?.最后部署时间 ||
-    selectedHomeworkData?.更新时间 ||
-    courseHomeworkIndex?.更新时间 ||
+    selectedSubmissionData?.更新时间 ||
+    collectionIndex?.更新时间 ||
     manifestData?.更新时间 ||
     indexData?.更新时间 ||
     '加载中...'
 
-  const canInteract = !routeError && !!selectedCourse && !!courseHomeworkIndex
+  const canInteract = !routeError && !!selectedCourse && !!collectionIndex
 
   return (
     <main className="min-h-screen text-slate-900">
@@ -686,19 +685,19 @@ function App() {
               </select>
             </div>
             <div>
-              <label className="mb-2 flex items-center gap-2 text-sm text-slate-700" htmlFor="hw-select">
+              <label className="mb-2 flex items-center gap-2 text-sm text-slate-700" htmlFor="submission-select">
                 <AppIcon name="hash" className="h-4 w-4 text-indigo-700" />
                 提交序号
               </label>
               <select
-                id="hw-select"
+                id="submission-select"
                 className="w-full rounded-xl border border-sky-200 bg-white px-3 py-2 text-sm outline-none ring-sky-300 transition focus:ring"
                 value={selectedKey}
                 onChange={(e) => {
-                  const nextHw = e.target.value
+                  const nextSubmission = e.target.value
                   const nextSearchParams = new URLSearchParams()
-                  if (nextHw) {
-                    nextSearchParams.set('hw', nextHw)
+                  if (nextSubmission) {
+                    nextSearchParams.set('seq', nextSubmission)
                   }
                   const nextSearch = nextSearchParams.toString()
                   navigate(
@@ -706,11 +705,11 @@ function App() {
                     { replace: false },
                   )
                 }}
-                disabled={!homeworkKeys.length || !canInteract}
+                disabled={!submissionKeys.length || !canInteract}
               >
                 {isCourseLoading && <option value="">加载中...</option>}
-                {!isCourseLoading && !selectedKey && <option value="">请选择作业</option>}
-                {homeworkKeys.map((k) => (
+                {!isCourseLoading && !selectedKey && <option value="">请选择提交序号</option>}
+                {submissionKeys.map((k) => (
                   <option key={k} value={k}>
                     {k}
                   </option>
@@ -731,12 +730,17 @@ function App() {
                   return (
                     <div key={content} className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
                       <p className="break-all text-sm font-medium text-slate-800">{content}</p>
-                      {summary && (selectedContentList.length > 1 || !!summary.无效附件人数 || !!summary.附件缺失人数) && (
+                      {summary &&
+                        (selectedContentList.length > 1 ||
+                          !!summary.无效附件人数 ||
+                          !!summary.附件缺失人数 ||
+                          !!summary.已补交人数) && (
                         <p className="mt-1 text-xs text-slate-500">
                           {[
                             selectedContentList.length > 1 ? `已交 ${summary.已交人数} / 应交 ${summary.应交人数}` : '',
                             summary.无效附件人数 ? `无效附件 ${summary.无效附件人数} 人` : '',
                             summary.附件缺失人数 ? `本地附件缺失 ${summary.附件缺失人数} 人` : '',
+                            summary.已补交人数 ? `补交 ${summary.已补交人数} 人` : '',
                           ]
                             .filter(Boolean)
                             .join('，')}
@@ -749,49 +753,51 @@ function App() {
             </div>
           )}
 
-          <div className="mt-4 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
-            <div className="grid content-start gap-3">
-              <div className="rounded-xl border border-sky-100 bg-sky-50/70 p-4">
-                <p className="flex items-center gap-2 text-xs text-slate-500">
-                  <AppIcon name="clock" className="h-4 w-4 text-sky-700" />
-                  当前提交序号统计截止时间
-                </p>
-                <p className="mt-1 text-xl font-semibold tracking-tight text-sky-700">
-                  {selected?.统计截止时间 || selected?.最后提交时间 || '-'}
-                </p>
+          {selected && (
+            <div className="mt-4 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+              <div className="grid content-start gap-3">
+                <div className="rounded-xl border border-sky-100 bg-sky-50/70 p-4">
+                  <p className="flex items-center gap-2 text-xs text-slate-500">
+                    <AppIcon name="clock" className="h-4 w-4 text-sky-700" />
+                    当前提交序号统计截止时间
+                  </p>
+                  <p className="mt-1 text-xl font-semibold tracking-tight text-sky-700">
+                    {selected.统计截止时间 || selected.最后提交时间 || '-'}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
+                  <p className="flex items-center gap-2 text-xs text-slate-500">
+                    <AppIcon name="list" className="h-4 w-4 text-emerald-700" />
+                    应交 / 已交 / 未交
+                  </p>
+                  <p className="mt-1 text-xl font-semibold tracking-tight text-slate-800">
+                    {summaryExpected} / {summarySubmitted} / {summaryMissing}
+                  </p>
+                  <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-emerald-100">
+                    <div
+                      className="h-full rounded-full bg-emerald-500 transition-all"
+                      style={{ width: `${(summaryRate * 100).toFixed(2)}%` }}
+                    />
+                  </div>
+                  <p className="mt-2 text-xs text-emerald-700">提交进度 {(summaryRate * 100).toFixed(2)}%</p>
+                </div>
               </div>
-              <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
+              <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 lg:sticky lg:top-4">
                 <p className="flex items-center gap-2 text-xs text-slate-500">
-                  <AppIcon name="list" className="h-4 w-4 text-emerald-700" />
-                  应交 / 已交 / 未交
+                  <AppIcon name="donut" className="h-4 w-4 text-indigo-700" />
+                  当前提交序号总提交率
                 </p>
-                <p className="mt-1 text-xl font-semibold tracking-tight text-slate-800">
-                  {summaryExpected} / {summarySubmitted} / {summaryMissing}
-                </p>
-                <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-emerald-100">
-                  <div
-                    className="h-full rounded-full bg-emerald-500 transition-all"
-                    style={{ width: `${(summaryRate * 100).toFixed(2)}%` }}
+                <div className="mt-3 flex items-center justify-center">
+                  <DonutChart
+                    rate={summaryRate}
+                    size={148}
+                    label="已交 vs 未交"
+                    color="#0ea5e9"
                   />
                 </div>
-                <p className="mt-2 text-xs text-emerald-700">提交进度 {(summaryRate * 100).toFixed(2)}%</p>
               </div>
             </div>
-            <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 lg:sticky lg:top-4">
-              <p className="flex items-center gap-2 text-xs text-slate-500">
-                <AppIcon name="donut" className="h-4 w-4 text-indigo-700" />
-                当前提交序号总提交率
-              </p>
-              <div className="mt-3 flex items-center justify-center">
-                <DonutChart
-                  rate={summaryRate}
-                  size={148}
-                  label="已交 vs 未交"
-                  color="#0ea5e9"
-                />
-              </div>
-            </div>
-          </div>
+          )}
         </section>
 
         {error && (
@@ -803,51 +809,6 @@ function App() {
         {routeError && (
           <section className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
             路由参数错误：{routeError}
-          </section>
-        )}
-
-        {!!issueSections.length && (
-          <section className="mt-6 grid gap-4 md:grid-cols-2">
-            {issueSections.map((section) => {
-              const isMissing = section.tone === 'amber'
-              const panelClass = isMissing
-                ? 'border-amber-200 bg-amber-50 text-amber-900'
-                : 'border-rose-200 bg-rose-50 text-rose-900'
-              const badgeClass = isMissing ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'
-              const itemClass = isMissing
-                ? 'border-amber-200 bg-white/70 text-amber-900'
-                : 'border-rose-200 bg-white/70 text-rose-900'
-              const classEntriesForIssue = Object.entries(section.classMap).filter(([, students]) => students.length)
-
-              return (
-                <article key={section.title} className={`rounded-2xl border p-4 text-sm shadow-sm ${panelClass}`}>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h2 className="flex items-center gap-2 text-base font-semibold">
-                      <AppIcon name="warn" className="h-4 w-4" />
-                      {section.title}
-                    </h2>
-                    <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${badgeClass}`}>
-                      {section.count} 人
-                    </span>
-                  </div>
-                  <p className="mt-2 text-xs leading-5 opacity-90">{section.description}</p>
-                  <div className="mt-3 space-y-2">
-                    {classEntriesForIssue.map(([className, students]) => (
-                      <div key={className} className="rounded-xl border border-current/10 bg-white/40 p-2">
-                        <p className="mb-2 text-xs font-semibold">{className}</p>
-                        <ul className="grid grid-cols-[repeat(auto-fit,minmax(110px,1fr))] gap-2">
-                          {students.map((student) => (
-                            <li key={student} className={`rounded-lg border px-2 py-1 text-center text-xs ${itemClass}`}>
-                              {extractStudentNo(student)}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))}
-                  </div>
-                </article>
-              )
-            })}
           </section>
         )}
 
@@ -878,11 +839,19 @@ function App() {
                   <p className="mb-2 text-center text-xs font-medium text-slate-500">未提交的学号名单</p>
                   <ul className="space-y-2 text-sm">
                     {classStat.未交名单.length ? (
-                      classStat.未交名单.map((name) => (
-                        <li key={name} className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-center text-amber-800">
-                          {extractStudentNo(name)}
-                        </li>
-                      ))
+                      classStat.未交名单.map((name) => {
+                        const studentNo = extractStudentNo(name)
+                        const tone = missingStudentTone(classStat, studentNo)
+                        return (
+                          <li
+                            key={name}
+                            className={`flex items-center justify-between gap-2 rounded-lg border px-2 py-1 text-xs ${tone.className}`}
+                          >
+                            <span className="font-medium">{studentNo}</span>
+                            <span>{tone.label}</span>
+                          </li>
+                        )
+                      })
                     ) : (
                       <li className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-center text-emerald-700">
                         本班全部已提交
@@ -892,7 +861,7 @@ function App() {
                 </article>
               ))}
 
-          {!selected && !error && courseHomeworkIndex && !isHomeworkLoading && (
+          {!selected && !error && !routeError && collectionIndex && !isSubmissionLoading && (
             <article className="col-span-full animate-rise rounded-2xl border border-slate-200 bg-white/95 p-6 text-center text-slate-600 shadow-[0_20px_45px_rgba(14,165,233,0.08)]">
               当前收集表暂无提交数据
             </article>

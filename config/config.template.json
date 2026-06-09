@@ -4,13 +4,7 @@
   "attachments": "",
   "students": "config/students.json",
   "other_students": "config/other_students.json",
-  "output_filename_templates": {
-    "default": "{student_no}{student_name}{ext}"
-  },
   "zip_enabled": true,
-  "zip_name_templates": {
-    "default": "{course_name}-{homework_label}"
-  },
   "out_root": "out",
   "web_data_root": "webapp/public/data",
   "course_index": "webapp/public/courses.json",

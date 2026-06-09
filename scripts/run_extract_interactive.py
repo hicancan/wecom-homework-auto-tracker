@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -17,10 +19,22 @@ class PlanItem:
     course: str
     excel: Path
     labels: list[str]
+    cutoff_policy: str
+    manual_cutoffs: dict[str, str]
 
 
 def normalize_text(value: object) -> str:
     return " ".join(str(value or "").strip().split())
+
+
+def sanitize_filename_component(text: object) -> str:
+    return re.sub(r'[\\/:*?"<>|]', "_", str(text or "")).strip()
+
+
+def format_time(value: object) -> str:
+    if pd.isna(value):
+        return ""
+    return pd.to_datetime(value).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def is_new_model_title(title: str) -> bool:
@@ -40,11 +54,13 @@ def discover_courses(courses_dir: Path) -> dict[str, Path]:
     return courses
 
 
-def discover_labels(excel_path: Path) -> dict[str, list[str]]:
+def discover_labels(excel_path: Path) -> tuple[dict[str, list[str]], pd.DataFrame]:
     df = pd.read_excel(excel_path)
-    for required in ["提交序号", "提交内容", "请上传对应文件"]:
+    for required in ["提交序号", "提交内容", "请上传对应文件", "填写时间"]:
         if required not in df.columns:
             raise ValueError(f"Excel 缺少 `{required}`: {excel_path}")
+    df = df.copy()
+    df["_record_time"] = pd.to_datetime(df["填写时间"], errors="raise")
     labels: dict[str, list[str]] = {}
     for _, row in df.iterrows():
         label = normalize_text(row["提交序号"])
@@ -54,7 +70,71 @@ def discover_labels(excel_path: Path) -> dict[str, list[str]]:
         labels.setdefault(label, [])
         if content not in labels[label]:
             labels[label].append(content)
-    return labels
+    return labels, df
+
+
+def load_published_cutoffs(repo_root: Path, course: str) -> dict[str, pd.Timestamp]:
+    index_path = repo_root / "webapp" / "public" / "data" / f"{sanitize_filename_component(course)}.index.json"
+    if not index_path.exists():
+        return {}
+    data = json.loads(index_path.read_text(encoding="utf-8"))
+    refs = data.get("提交序号列表", [])
+    if not isinstance(refs, list):
+        raise ValueError(f"公开索引缺少提交序号列表: {index_path}")
+    cutoffs: dict[str, pd.Timestamp] = {}
+    for item in refs:
+        if not isinstance(item, dict):
+            continue
+        label = normalize_text(item.get("提交序号", ""))
+        rel = str(item.get("数据文件", "")).removeprefix("data/")
+        if not label or not rel:
+            continue
+        stat_path = repo_root / "webapp" / "public" / "data" / rel
+        if not stat_path.exists():
+            continue
+        stat = json.loads(stat_path.read_text(encoding="utf-8"))
+        cutoff_text = stat.get("统计截止时间") or stat.get("最后提交时间")
+        if cutoff_text:
+            cutoffs[label] = pd.to_datetime(cutoff_text, errors="raise")
+    return cutoffs
+
+
+def latest_time_for_label(df: pd.DataFrame, label: str) -> pd.Timestamp:
+    selected = df[df["提交序号"].map(normalize_text) == label]
+    if selected.empty:
+        raise ValueError(f"提交序号没有记录: {label}")
+    return selected["_record_time"].max()
+
+
+def choose_cutoff_policy(
+    *,
+    course: str,
+    labels: list[str],
+    labels_df: pd.DataFrame,
+    published_cutoffs: dict[str, pd.Timestamp],
+) -> tuple[str, dict[str, str]]:
+    print("\n统计截止时间:")
+    for label in labels:
+        latest = latest_time_for_label(labels_df, label)
+        cutoff = published_cutoffs.get(label)
+        late_rows = int((labels_df[(labels_df["提交序号"].map(normalize_text) == label)]["_record_time"] > cutoff).sum()) if cutoff is not None else 0
+        print(
+            f"  {course} | {label}: "
+            f"已发布截止={format_time(cutoff) or '无'} | Excel最新={format_time(latest)} | 截止后记录={late_rows}"
+        )
+    default_policy = "keep"
+    print("截止策略: keep=已发布保留/新序号首次发布, advance=全部推进到 Excel 最新, manual=手动指定")
+    raw = input(f"请选择截止策略 [keep/advance/manual]（默认 {default_policy}）: ").strip().lower()
+    policy = raw or default_policy
+    if policy not in {"keep", "advance", "manual"}:
+        raise ValueError(f"未知截止策略: {policy}")
+    manual: dict[str, str] = {}
+    if policy == "manual":
+        for label in labels:
+            default_time = published_cutoffs.get(label) or latest_time_for_label(labels_df, label)
+            raw_time = input(f"{label} 截止时间（默认 {format_time(default_time)}）: ").strip()
+            manual[label] = raw_time or format_time(default_time)
+    return policy, manual
 
 
 def parse_selection(raw: str, count: int) -> list[int]:
@@ -81,7 +161,7 @@ def parse_selection(raw: str, count: int) -> list[int]:
     return sorted(picked)
 
 
-def choose_items(courses: dict[str, Path]) -> list[PlanItem]:
+def choose_items(repo_root: Path, courses: dict[str, Path]) -> list[PlanItem]:
     course_names = list(courses.keys())
     print("\n可选课程列表:")
     for idx, name in enumerate(course_names, 1):
@@ -99,7 +179,7 @@ def choose_items(courses: dict[str, Path]) -> list[PlanItem]:
     for course_idx in course_indices:
         course = course_names[course_idx - 1]
         excel = courses[course]
-        labels_map = discover_labels(excel)
+        labels_map, labels_df = discover_labels(excel)
         labels = list(labels_map.keys())
         print(f"\n选择提交序号: {course}")
         for idx, label in enumerate(labels, 1):
@@ -112,7 +192,22 @@ def choose_items(courses: dict[str, Path]) -> list[PlanItem]:
                     break
             except Exception as err:
                 print(f"输入无效: {err}")
-        plan.append(PlanItem(course=course, excel=excel, labels=[labels[i - 1] for i in label_indices]))
+        selected_labels = [labels[i - 1] for i in label_indices]
+        cutoff_policy, manual_cutoffs = choose_cutoff_policy(
+            course=course,
+            labels=selected_labels,
+            labels_df=labels_df,
+            published_cutoffs=load_published_cutoffs(repo_root, course),
+        )
+        plan.append(
+            PlanItem(
+                course=course,
+                excel=excel,
+                labels=selected_labels,
+                cutoff_policy=cutoff_policy,
+                manual_cutoffs=manual_cutoffs,
+            )
+        )
     return plan
 
 
@@ -135,6 +230,9 @@ def build_extract_cmd(
     ]
     for label in item.labels:
         cmd.extend(["--label", label])
+    cmd.extend(["--cutoff-policy", item.cutoff_policy])
+    for label, cutoff in item.manual_cutoffs.items():
+        cmd.extend(["--cutoff", f"{label}={cutoff}"])
     if cleanup_mode != "off":
         cmd.extend(["--cleanup-source-attachments", cleanup_mode])
     if cleanup_only:
@@ -230,10 +328,10 @@ def main() -> int:
     if not courses:
         print("未发现新模型 Excel。")
         return 1
-    plan = choose_items(courses)
+    plan = choose_items(repo_root, courses)
     print("\n执行计划:")
     for item in plan:
-        print(f"- {item.course}: {', '.join(item.labels)}")
+        print(f"- {item.course}: {', '.join(item.labels)} | cutoff={item.cutoff_policy}")
     if input("确认执行？[y/N]: ").strip().lower() != "y":
         print("已取消。")
         return 1

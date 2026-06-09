@@ -69,20 +69,20 @@ def rebuild_course_manifest(public_root: Path, course_index_path: Path) -> dict[
             raise FileNotFoundError(f"课程索引文件不存在: {rel} ({course_index_file})")
         hash_input.extend(course_index_file.read_bytes())
 
-        course_data = _load_json_object(course_index_file, "课程作业索引")
-        homework_list = course_data.get("作业列表", [])
-        if not isinstance(homework_list, list):
+        course_data = _load_json_object(course_index_file, "收集表提交序号索引")
+        submission_list = course_data.get("提交序号列表", [])
+        if not isinstance(submission_list, list):
             continue
-        for hw in homework_list:
-            if not isinstance(hw, dict):
+        for submission in submission_list:
+            if not isinstance(submission, dict):
                 continue
-            hw_rel = str(hw.get("数据文件", "")).strip()
-            if not hw_rel:
+            submission_rel = str(submission.get("数据文件", "")).strip()
+            if not submission_rel:
                 continue
-            hw_file = (public_root / hw_rel).resolve()
-            if not hw_file.exists():
-                raise FileNotFoundError(f"作业数据文件不存在: {hw_rel} ({hw_file})")
-            hash_input.extend(hw_file.read_bytes())
+            submission_file = (public_root / submission_rel).resolve()
+            if not submission_file.exists():
+                raise FileNotFoundError(f"提交序号数据文件不存在: {submission_rel} ({submission_file})")
+            hash_input.extend(submission_file.read_bytes())
 
     version = _hash_bytes(bytes(hash_input))
     now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
