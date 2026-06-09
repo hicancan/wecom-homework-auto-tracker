@@ -210,6 +210,7 @@ def process_collection(
     cleanup_mode: str,
     cleanup_only: bool,
     skip_unknown: bool,
+    no_late: bool,
     configured_meta: dict[str, Any],
 ) -> dict[str, Any]:
     df, parsed_meta, columns = load_collection_excel(excel_path)
@@ -321,7 +322,8 @@ def process_collection(
         )
         stats[label] = stat
         write_submission_reports(collection_out_dir, label, stat)
-        zip_paths.append(str(create_submission_zip(collection_out_dir, label, manifest, None)))
+        zip_cutoff = cutoff if no_late else None
+        zip_paths.append(str(create_submission_zip(collection_out_dir, label, manifest, zip_cutoff)))
 
     archive_counts = _count_archive_status(manifest)
     print(f"\n  归档状态: active={archive_counts['active']} missing={archive_counts['missing']} invalid={archive_counts['invalid']}")
@@ -396,6 +398,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--cleanup-only", action="store_true", help="仅执行源文件清理，不更新归档和 web 数据")
     parser.add_argument("--skip-unknown", action="store_true", help="跳过不在名单中的填写人，不触发 fail-fast")
+    parser.add_argument("--no-late", action="store_true", help="不允许补交：ZIP 只打包截止内文件，补交计入未交")
     parser.add_argument("--list-collections", action="store_true")
     parser.add_argument("--list-submission-labels", action="store_true")
     return parser.parse_args()
@@ -432,6 +435,7 @@ def main() -> None:
         cleanup_mode=args.cleanup_source_attachments,
         cleanup_only=args.cleanup_only,
         skip_unknown=args.skip_unknown,
+        no_late=args.no_late,
         configured_meta=configured_meta,
     )
     print("处理完成:")
