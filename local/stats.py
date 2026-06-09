@@ -99,6 +99,7 @@ def make_submission_stat(
     students_by_class: dict[str, list[dict[str, str]]],
     other_students_by_name: dict[str, dict[str, str]],
     cutoff: pd.Timestamp | None,
+    no_late: bool = False,
 ) -> dict[str, Any]:
     df_submission = df[df["_submission_label"] == submission_label]
     if cutoff is not None:
@@ -151,7 +152,7 @@ def make_submission_stat(
             content_late_submitted: list[str] = []
             for student in students:
                 cutoff_entry = active_entry_for(manifest, student["学号"], submission_label, content_label, cutoff)
-                final_entry = active_entry_for(manifest, student["学号"], submission_label, content_label, None)
+                final_entry = cutoff_entry if no_late else active_entry_for(manifest, student["学号"], submission_label, content_label, None)
                 cutoff_active = bool(cutoff_entry and cutoff_entry.get("状态") == "active")
                 final_active = bool(final_entry and final_entry.get("状态") == "active")
                 final_invalid = bool(
@@ -204,7 +205,7 @@ def make_submission_stat(
                 for content_label in content_labels
             ]
             final_entries = [
-                active_entry_for(manifest, student["学号"], submission_label, content_label, None)
+                active_entry_for(manifest, student["学号"], submission_label, content_label, None if not no_late else cutoff)
                 for content_label in content_labels
             ]
             cutoff_complete = bool(cutoff_entries and all(entry and entry.get("状态") == "active" for entry in cutoff_entries))
@@ -270,7 +271,7 @@ def make_submission_stat(
             for content_label in content_labels
         ]
         final_entries = [
-            active_entry_for(manifest, student["学号"], submission_label, content_label, None)
+            active_entry_for(manifest, student["学号"], submission_label, content_label, None if not no_late else cutoff)
             for content_label in content_labels
         ]
         cutoff_complete = bool(cutoff_entries and all(entry and entry.get("状态") == "active" for entry in cutoff_entries))

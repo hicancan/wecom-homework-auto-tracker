@@ -319,6 +319,7 @@ def process_collection(
             students_by_class=students_by_class,
             other_students_by_name=other_students_by_name,
             cutoff=cutoff,
+            no_late=no_late,
         )
         stats[label] = stat
         write_submission_reports(collection_out_dir, label, stat)
