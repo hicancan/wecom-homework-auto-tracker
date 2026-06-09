@@ -149,8 +149,16 @@ def _count_archive_status(manifest: dict[str, Any]) -> dict[str, int]:
         versions = entry.get("versions", [])
         if not versions:
             continue
-        latest = versions[-1]
-        status = str(latest.get("状态") or latest.get("status", "")).strip()
+        # Sort by time descending, active preferred when tie
+        status_rank = {"active": 0, "invalid": 1, "missing": 2}
+        versions = sorted(
+            versions,
+            key=lambda v: (
+                -int(parse_datetime_text(v.get("提交时间")).timestamp()) if parse_datetime_text(v.get("提交时间")) else 0,
+                status_rank.get(v.get("状态", ""), 99),
+            ),
+        )
+        status = str(versions[0].get("状态") or versions[0].get("status", "")).strip()
         if status == "active":
             active += 1
         elif status == "missing":
