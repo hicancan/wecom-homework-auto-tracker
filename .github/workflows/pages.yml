@@ -132,6 +132,7 @@ jobs:
         uses: actions/deploy-pages@v4
 
       - name: Purge Cloudflare Cache
+        if: ${{ vars.CF_PURGE_ENABLED == '1' }}
         env:
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
@@ -140,7 +141,9 @@ jobs:
             echo "Skip purge: CF_API_TOKEN or CF_ZONE_ID is not set."
             exit 0
           fi
-          curl --fail-with-body -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
+          if ! curl --fail-with-body -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
             -H "Authorization: Bearer ${CF_API_TOKEN}" \
             -H "Content-Type: application/json" \
-            --data '{"purge_everything":true}'
+            --data '{"purge_everything":true}'; then
+            echo "::warning::Cloudflare cache purge failed; static site deployments already completed."
+          fi
