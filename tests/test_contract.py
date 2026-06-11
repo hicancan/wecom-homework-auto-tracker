@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from contract import parse_collection_title, parse_submission_content, require_collection_id
+from contract import parse_collection_title, parse_submission_content, require_collection_id, suggest_collection_id
 
 
 def test_parse_collection_title_requires_new_shape() -> None:
@@ -21,6 +21,20 @@ def test_parse_submission_content_binds_suffix_contract() -> None:
 
     assert content["提交内容名"] == "实验报告"
     assert content["允许后缀"] == (".doc", ".docx")
+
+
+def test_math_modeling_content_binds_pdf_suffix() -> None:
+    content = parse_submission_content("期末大作业(.doc/.docx/.pdf)")
+
+    assert content["提交内容名"] == "期末大作业"
+    assert content["允许后缀"] == (".doc", ".docx", ".pdf")
+
+
+def test_suggest_collection_id_from_chinese_title() -> None:
+    assert (
+        suggest_collection_id("数学建模期末大作业[B240402][大二下]")
+        == "math-modeling-final-b240402-sophomore-spring"
+    )
 
 
 @pytest.mark.parametrize("value", ["旧标题", "主题[]", "主题[对象][周期][多余]"])

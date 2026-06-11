@@ -14,6 +14,33 @@ TITLE_RE = re.compile(r"^(?P<topic>[^\[\]]+)\[(?P<audience>[^\[\]]+)\](?:\[(?P<p
 CONTENT_RE = re.compile(r"^(?P<name>.+?)\((?P<exts>\.[A-Za-z0-9]+(?:/\.[A-Za-z0-9]+)*)\)$")
 COLLECTION_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 ARCHIVE_SCHEMA_VERSION = 2
+TOPIC_SLUG_REPLACEMENTS = (
+    ("人工智能导论及其Python应用实践实验", "ai-python-exp"),
+    ("算法分析与设计作业", "algorithm-design-homework"),
+    ("算法分析与设计实验", "algorithm-design-exp"),
+    ("数学建模期末大作业", "math-modeling-final"),
+    ("认识实习", "internship"),
+    ("人工智能", "ai"),
+    ("算法分析与设计", "algorithm-design"),
+    ("数学建模", "math-modeling"),
+    ("期末大作业", "final"),
+    ("大作业", "project"),
+    ("实验报告", "lab-report"),
+    ("实验", "exp"),
+    ("作业", "homework"),
+    ("报告", "report"),
+    ("实习", "internship"),
+)
+PERIOD_SLUGS = {
+    "大一上": "freshman-fall",
+    "大一下": "freshman-spring",
+    "大二上": "sophomore-fall",
+    "大二下": "sophomore-spring",
+    "大三上": "junior-fall",
+    "大三下": "junior-spring",
+    "大四上": "senior-fall",
+    "大四下": "senior-spring",
+}
 
 
 def now_text() -> str:
@@ -99,6 +126,61 @@ def require_collection_id(value: str) -> str:
     if not COLLECTION_ID_RE.fullmatch(text):
         raise ValueError(f"collection_id 必须是小写 ASCII 短横线 ID: {value}")
     return text
+
+
+def slugify_ascii(text: str) -> str:
+    raw = str(text or "")
+    for source, replacement in TOPIC_SLUG_REPLACEMENTS:
+        raw = raw.replace(source, f" {replacement} ")
+    raw = raw.replace("&", " and ")
+    tokens = re.findall(r"[A-Za-z0-9]+", raw)
+    return "-".join(token.lower() for token in tokens)
+
+
+def slugify_topic(topic: str) -> str:
+    slug = slugify_ascii(topic)
+    if slug:
+        return slug
+    digest = hashlib.sha1(topic.encode("utf-8")).hexdigest()[:8]
+    return f"collection-{digest}"
+
+
+def slugify_audience(audience: str) -> str:
+    slug = slugify_ascii(audience)
+    if slug:
+        return slug
+    digest = hashlib.sha1(audience.encode("utf-8")).hexdigest()[:8]
+    return f"audience-{digest}"
+
+
+def slugify_period(period: str) -> str:
+    text = str(period or "").strip()
+    if not text:
+        return ""
+    if text in PERIOD_SLUGS:
+        return PERIOD_SLUGS[text]
+    slug = slugify_ascii(text)
+    if slug:
+        return slug
+    digest = hashlib.sha1(text.encode("utf-8")).hexdigest()[:8]
+    return f"period-{digest}"
+
+
+def suggest_collection_id(title: str, existing_ids: set[str] | None = None) -> str:
+    meta = parse_collection_title(title)
+    parts = [
+        slugify_topic(meta["主题"]),
+        slugify_audience(meta["对象"]),
+        slugify_period(meta["周期"]),
+    ]
+    base = require_collection_id("-".join(part for part in parts if part))
+    used = existing_ids or set()
+    if base not in used:
+        return base
+    suffix = 2
+    while f"{base}-{suffix}" in used:
+        suffix += 1
+    return f"{base}-{suffix}"
 
 
 def parse_submission_content(label: str) -> dict[str, Any]:

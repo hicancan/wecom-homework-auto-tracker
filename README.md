@@ -42,7 +42,7 @@ flowchart LR
 - **双发布模式** — `cutoff`（截止模式，超时=未提交）或 `makeup-window`（补交窗口，窗口内补交标蓝）
 - **后缀校验** — 签约 `.doc/.docx`，学生传了 `.pdf` 自动标记无效
 - **Fail-Fast 名单校验** — 收集前扫描 Excel 填写人，不在名单内立即阻断并报告
-- **Serverless 部署** — 纯静态 JSON + React PWA，GitHub Pages 零运维成本
+- **Serverless 部署** — 纯静态 JSON + React PWA，GitHub Pages 与 EdgeOne Pages 双发布
 - **四色状态体系** — 绿=已提交 / 蓝=已补交 / 红=未提交 / 黄=后缀无效
 
 ## 快速开始
@@ -51,10 +51,12 @@ flowchart LR
 # 1. 复制配置模板
 Copy-Item .\config\config.template.json .\config\local.config.json
 
-# 2. 编辑 local.config.json，填入 Excel 路径、微盘同步路径、学生名单
+# 2. 编辑 local.config.json，填入微盘同步路径、学生名单
 
 # 3. 交互式收集（推荐）
 uv run python .\scripts\run_extract_interactive.py --config .\config\local.config.json
+
+# 未注册的新模型 Excel 会在交互入口中自动提示注册，并建议稳定 collection_id
 
 # 4. 或命令行精确控制
 uv run python .\local\extract_homework.py `
@@ -80,6 +82,22 @@ uv run python .\local\extract_homework.py `
 ```
 
 **唯一业务键**：`学号 + 提交序号 + 提交内容`
+
+## 新增收集表
+
+新增企业微信收集表时，只要把导出的 Excel 放进 `collections_dir`，并保证文件名等于标题：
+
+```text
+数学建模期末大作业[B240402][大二下].xlsx
+```
+
+随后运行交互脚本。系统会解析标题、读取 `提交序号 / 提交内容`，并建议小写 ASCII `collection_id`，例如：
+
+```text
+math-modeling-final-b240402-sophomore-spring
+```
+
+确认后写入本地 `config/local.config.json`。`提交内容` 不允许为空，也不再支持配置默认值；空值会直接失败，避免脏数据进入归档。
 
 ## 归档分层
 
@@ -118,9 +136,9 @@ graph TD
 | 离线管线 | Python 3.12 + pandas + openpyxl |
 | 前端 | React 19 + TypeScript 5.9 + Tailwind CSS |
 | 构建 | Vite + Rolldown |
-| 部署 | GitHub Pages + PWA（Service Worker 离线可用） |
+| 部署 | GitHub Pages + EdgeOne Pages + PWA（Service Worker 离线可用） |
 | 数据 | 静态 JSON（`webapp/public/data/`） |
-| 测试 | pytest（16 用例） |
+| 测试 | pytest + Vitest |
 
 ## 项目结构
 
@@ -149,7 +167,7 @@ wecom-homework-auto-tracker/
 |------|------|------|
 | 🟢 已提交 | 截止内有效提交 | 截止前文件存在且后缀正确 |
 | 🔵 已补交 | 补交窗口内提交 | 截止后、窗口内有效提交 |
-| 🔴 未提交 | 未交或文件丢失 | 未提交 / WeDrive 源不可用 |
+| 🔴 未提交 | 未达标 | 截止口径内没有有效提交 |
 | 🟡 后缀无效 | 格式错误 | 文件后缀不符合提交内容约定 |
 
 ## License

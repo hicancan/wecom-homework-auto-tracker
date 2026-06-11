@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -11,8 +10,14 @@ from pathlib import Path
 
 import pandas as pd
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+LOCAL_DIR = REPO_ROOT / "local"
+if str(LOCAL_DIR) not in sys.path:
+    sys.path.insert(0, str(LOCAL_DIR))
 
-TITLE_RE = r"^[^\[\]]+\[[^\[\]]+\](?:\[[^\[\]]+\])?$"
+from contract import parse_collection_title, require_collection_id, suggest_collection_id  # noqa: E402
+from excel_loader import discover_collection_excels, load_collection_excel  # noqa: E402
+from students import expand_class_audience  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -21,6 +26,15 @@ class CollectionConfig:
     title: str
     excel: Path
     status: str
+
+
+@dataclass(frozen=True)
+class UnregisteredCollection:
+    suggested_collection_id: str
+    title: str
+    excel: Path
+    classes: list[str]
+    labels: dict[str, list[str]]
 
 
 @dataclass(frozen=True)
@@ -85,6 +99,109 @@ def load_config(path: Path) -> dict:
     return data
 
 
+def relative_config_path(repo_root: Path, path: Path) -> str:
+    try:
+        return path.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        return str(path.resolve())
+
+
+def resolve_config_path(repo_root: Path, value: object) -> Path:
+    path = Path(normalize_text(value))
+    if not path.is_absolute():
+        path = (repo_root / path).resolve()
+    return path
+
+
+def labels_from_loaded_df(df: pd.DataFrame) -> dict[str, list[str]]:
+    labels: dict[str, list[str]] = {}
+    for _, row in df.iterrows():
+        label = normalize_text(row["_submission_label"])
+        content = normalize_text(row["_content_label"])
+        if not label or not content:
+            raise ValueError("提交序号/提交内容不能为空")
+        labels.setdefault(label, [])
+        if content not in labels[label]:
+            labels[label].append(content)
+    return labels
+
+
+def discover_unregistered_excels(repo_root: Path, cfg: dict) -> list[UnregisteredCollection]:
+    collections_dir = resolve_config_path(repo_root, cfg.get("collections_dir", "config"))
+    discovered = discover_collection_excels(collections_dir)
+    raw = cfg.get("collections")
+    registered_titles: set[str] = set()
+    existing_ids: set[str] = set()
+    if isinstance(raw, dict):
+        for collection_id, item in raw.items():
+            existing_ids.add(require_collection_id(str(collection_id)))
+            if isinstance(item, dict):
+                title = normalize_text(item.get("title"))
+                if title:
+                    registered_titles.add(title)
+
+    candidates: list[UnregisteredCollection] = []
+    for title, excel in discovered.items():
+        if title in registered_titles:
+            continue
+        df, meta, _ = load_collection_excel(excel)
+        suggested_id = suggest_collection_id(title, existing_ids)
+        existing_ids.add(suggested_id)
+        classes = expand_class_audience(meta["对象"])
+        candidates.append(
+            UnregisteredCollection(
+                suggested_collection_id=suggested_id,
+                title=title,
+                excel=excel,
+                classes=classes,
+                labels=labels_from_loaded_df(df),
+            )
+        )
+    return candidates
+
+
+def register_unregistered_excels(repo_root: Path, config_path: Path, cfg: dict) -> dict:
+    candidates = discover_unregistered_excels(repo_root, cfg)
+    if not candidates:
+        return cfg
+
+    print("\n发现未注册的新模型 Excel:")
+    for idx, item in enumerate(candidates, 1):
+        label_text = "；".join(f"{label}: {', '.join(contents)}" for label, contents in item.labels.items())
+        class_text = ", ".join(item.classes) if item.classes else "未从对象解析班级"
+        print(f"  {idx}. {item.suggested_collection_id} | {item.title}")
+        print(f"     班级: {class_text}")
+        print(f"     提交: {label_text}")
+    raw = input("是否注册以上 Excel 到 local.config.json？[Y/n]: ").strip().lower()
+    if raw in {"n", "no"}:
+        return cfg
+
+    collections = cfg.setdefault("collections", {})
+    if not isinstance(collections, dict):
+        raise ValueError("配置 collections 必须是对象。")
+    for item in candidates:
+        collection_id = input(f"{item.title} 的 collection_id（默认 {item.suggested_collection_id}）: ").strip()
+        collection_id = require_collection_id(collection_id or item.suggested_collection_id)
+        if collection_id in collections:
+            raise ValueError(f"collection_id 已存在: {collection_id}")
+        classes = item.classes
+        if not classes:
+            raw_classes = input(f"{item.title} 班级列表（逗号分隔）: ").strip()
+            classes = [part.strip() for part in raw_classes.replace("，", ",").split(",") if part.strip()]
+            if not classes:
+                raise ValueError(f"无法注册未指定班级的收集表: {item.title}")
+        collections[collection_id] = {
+            "title": item.title,
+            "status": "active",
+            "classes": classes,
+            "excel": relative_config_path(repo_root, item.excel),
+        }
+
+    config_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"已更新本地配置: {config_path}")
+    return cfg
+
+
 def discover_collections(repo_root: Path, cfg: dict) -> list[CollectionConfig]:
     raw = cfg.get("collections")
     if not isinstance(raw, dict) or not raw:
@@ -93,9 +210,11 @@ def discover_collections(repo_root: Path, cfg: dict) -> list[CollectionConfig]:
     for collection_id, item in raw.items():
         if not isinstance(item, dict):
             raise ValueError(f"collections.{collection_id} 必须是对象。")
+        require_collection_id(str(collection_id))
         title = normalize_text(item.get("title"))
-        if not title or re.fullmatch(TITLE_RE, title) is None:
+        if not title:
             raise ValueError(f"收集表标题不符合新模型: {collection_id} -> {title}")
+        parse_collection_title(title)
         excel_text = normalize_text(item.get("excel"))
         if not excel_text:
             continue
@@ -118,22 +237,8 @@ def discover_collections(repo_root: Path, cfg: dict) -> list[CollectionConfig]:
 
 
 def discover_labels(excel_path: Path) -> tuple[dict[str, list[str]], pd.DataFrame]:
-    df = pd.read_excel(excel_path)
-    for required in ["提交序号", "提交内容", "请上传对应文件", "填写时间"]:
-        if required not in df.columns:
-            raise ValueError(f"Excel 缺少 `{required}`: {excel_path}")
-    df = df.copy()
-    df["_record_time"] = pd.to_datetime(df["填写时间"], errors="raise")
-    labels: dict[str, list[str]] = {}
-    for _, row in df.iterrows():
-        label = normalize_text(row["提交序号"])
-        content = normalize_text(row["提交内容"])
-        if not label or not content:
-            raise ValueError(f"提交序号/提交内容不能为空: {excel_path}")
-        labels.setdefault(label, [])
-        if content not in labels[label]:
-            labels[label].append(content)
-    return labels, df
+    df, _, _ = load_collection_excel(excel_path)
+    return labels_from_loaded_df(df), df
 
 
 def load_published_cutoffs(repo_root: Path, collection_id: str) -> dict[str, pd.Timestamp]:
@@ -163,7 +268,7 @@ def load_published_cutoffs(repo_root: Path, collection_id: str) -> dict[str, pd.
 
 
 def latest_time_for_label(df: pd.DataFrame, label: str) -> pd.Timestamp:
-    selected = df[df["提交序号"].map(normalize_text) == label]
+    selected = df[df["_submission_label"].map(normalize_text) == label]
     if selected.empty:
         raise ValueError(f"提交序号没有记录: {label}")
     return selected["_record_time"].max()
@@ -180,7 +285,7 @@ def choose_cutoff_policy(
     for label in labels:
         latest = latest_time_for_label(labels_df, label)
         cutoff = published_cutoffs.get(label)
-        rows_for_label = labels_df[labels_df["提交序号"].map(normalize_text) == label]
+        rows_for_label = labels_df[labels_df["_submission_label"].map(normalize_text) == label]
         late_rows = int((rows_for_label["_record_time"] > cutoff).sum()) if cutoff is not None else 0
         print(
             f"  {item.collection_id} | {label}: "
@@ -444,6 +549,7 @@ def main() -> int:
         fallback = repo_root / "config" / "local.config.json"
         config_path = fallback if fallback.exists() else config_path
     cfg = load_config(config_path)
+    cfg = register_unregistered_excels(repo_root, config_path, cfg)
     collections = discover_collections(repo_root, cfg)
     if not collections:
         print("未发现可提取的收集表 Excel。")

@@ -13,8 +13,9 @@
       "title": "示例主题[B240401][大二下]",
       "excel": "config/示例主题[B240401][大二下].xlsx",
       "status": "active",
-      "classes": ["B240401"],
-      "default_content": "作业(.doc/.docx)"
+      "classes": [
+        "B240401"
+      ]
     },
     "example-archived-b240402-sophomore-spring": {
       "title": "示例归档主题[B240402][大二下]",

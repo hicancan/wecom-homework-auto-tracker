@@ -1,6 +1,6 @@
 # WeCom Collection Tracker Operations
 
-更新日期：2026-06-09
+更新日期：2026-06-11
 
 ## 当前模型
 
@@ -50,6 +50,51 @@ uv run python .\local\extract_homework.py `
   --makeup-window-start "2026-06-09 09:52:00" `
   --makeup-window-end "2026-06-09 22:40:00" `
   --skip-unknown
+```
+
+## 新增收集表注册
+
+新增 Excel 必须满足：
+
+- 文件名等于收集表标题，例如 `数学建模期末大作业[B240402][大二下].xlsx`。
+- 标题符合 `主题[对象][周期]`。
+- 必须存在 `提交序号`、`提交内容`、`请上传对应文件`、`填写时间`。
+- `提交内容` 必须写成 `内容名(.ext/.ext)`，不允许为空。
+
+把 Excel 放入 `collections_dir` 后运行交互入口：
+
+```powershell
+uv run python .\scripts\run_extract_interactive.py --config .\config\local.config.json
+```
+
+交互入口会显示未注册 Excel、建议小写 ASCII `collection_id`、班级、提交序号和提交内容；确认后写入本地 ignored 配置 `config/local.config.json`。
+
+## 数学建模期末大作业
+
+已注册收集表：
+
+```text
+collection_id: math-modeling-final-b240402-sophomore-spring
+title: 数学建模期末大作业[B240402][大二下]
+classes: B240402
+```
+
+第1次截止时间为北京时间：
+
+```text
+2026-06-15 23:00:00
+```
+
+发布命令：
+
+```powershell
+uv run python .\local\extract_homework.py `
+  --config .\config\local.config.json `
+  --collection-id math-modeling-final-b240402-sophomore-spring `
+  --label 第1次 `
+  --cutoff-policy manual `
+  --cutoff "第1次=2026-06-15 23:00:00" `
+  --publish-mode cutoff
 ```
 
 ## 本地归档结构
