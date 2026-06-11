@@ -23,17 +23,17 @@
 
 教师用**企业微信收集表**收作业。学生微信提交后，本系统将收集表导出为 Excel，匹配本地微盘同步目录中的附件，做**增量版本归档**，最终生成一个**静态公开看板**，展示每个学生的提交状态（已提交 / 已补交 / 未提交 / 后缀无效）。
 
-```
-学生微信提交 → 企业微信收集表 → Excel 导出
-                                   ↓
-                          extract_homework.py
-                    ┌──────────┼──────────┐
-                    ↓          ↓          ↓
-              版本归档      统计报告    ZIP 打包
-                    │          │          │
-                    └──────────┼──────────┘
-                               ↓
-                      GitHub Pages 看板
+```mermaid
+flowchart LR
+    A[学生微信提交] --> B[企业微信收集表]
+    B --> C[Excel 导出]
+    C --> D[extract_homework.py]
+    D --> E[版本归档 _versions/]
+    D --> F[统计报告 stats/]
+    D --> G[ZIP 打包 zip/]
+    E --> H[archive_manifest.json]
+    F --> H
+    H --> I[GitHub Pages 看板]
 ```
 
 ## 核心特性
@@ -83,16 +83,33 @@ uv run python .\local\extract_homework.py `
 
 ## 归档分层
 
+```mermaid
+graph TD
+    subgraph 不可变
+        A[archive_manifest.json] --> B[_versions/]
+        B --> C[history/]
+    end
+    subgraph 可重建
+        D[current/] --> E[zip/]
+        E --> F[stats/]
+    end
+    A --> D
 ```
-out/collections/<collection_id>/
-├── archive_manifest.json     ← 权威真相源（所有版本索引 + SHA256）
-├── files/
-│   ├── _versions/            ← 不可变版本仓库（审计用，永不删除）
-│   └── current/              ← 当前激活版本快照（每次收集重建）
-├── history/                  ← 被覆盖的旧文件（只增不删）
-├── zip/                      ← 按提交序号打包
-└── stats/                    ← 统计报告（与 web 同步）
-```
+
+| 层 | 属性 | 说明 |
+|------|------|------|
+| `archive_manifest.json` | 不可变 | 权威真相源，所有版本索引 + SHA256 |
+| `_versions/` | 不可变 | 文件变化时存新版本，永不删除 |
+| `history/` | 不可变 | 被覆盖的旧文件，只增不删 |
+| `current/` | 可重建 | 最新版本快照，每次收集重建 |
+| `zip/` | 可重建 | 按提交序号打包 |
+| `stats/` | 可重建 | 统计报告，与 web 同步 |
+
+## 界面
+
+![主页](docs/homepage.png)
+
+![详情页](docs/detail.png)
 
 ## Tech Stack
 
