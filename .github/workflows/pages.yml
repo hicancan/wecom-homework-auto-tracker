@@ -99,6 +99,29 @@ jobs:
         working-directory: webapp
         run: npm run build
 
+      - name: Deploy to EdgeOne Pages
+        if: ${{ vars.EDGEONE_PAGES_ENABLED == 'true' }}
+        env:
+          EDGEONE_API_TOKEN: ${{ secrets.EDGEONE_API_TOKEN }}
+          EDGEONE_PROJECT_NAME: ${{ vars.EDGEONE_PROJECT_NAME }}
+          EDGEONE_PAGES_AREA: ${{ vars.EDGEONE_PAGES_AREA }}
+        run: |
+          if [ -z "${EDGEONE_API_TOKEN}" ]; then
+            echo "::error::EDGEONE_API_TOKEN secret is required"
+            exit 1
+          fi
+          if [ -z "${EDGEONE_PROJECT_NAME}" ]; then
+            echo "::error::EDGEONE_PROJECT_NAME variable is required"
+            exit 1
+          fi
+          area="${EDGEONE_PAGES_AREA:-overseas}"
+          echo "Deploying webapp/dist to EdgeOne Pages project '${EDGEONE_PROJECT_NAME}' in area '${area}'."
+          npx --yes edgeone@latest pages deploy webapp/dist \
+            -n "${EDGEONE_PROJECT_NAME}" \
+            -t "${EDGEONE_API_TOKEN}" \
+            -e production \
+            -a "${area}"
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
