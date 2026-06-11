@@ -50,6 +50,7 @@ def collection_registry(cfg: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "状态": str(item.get("status", "active")).strip() or "active",
             "classes": item.get("classes", []),
             "excel": str(item.get("excel", "")).strip(),
+            "default_content": str(item.get("default_content", "")).strip(),
         }
     return registry
 
