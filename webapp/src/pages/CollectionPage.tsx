@@ -153,6 +153,14 @@ export function CollectionPage() {
     if (pageError) return pageError
     return ''
   }, [collectionId, collectionIndex, hasLegacySubmissionParam, pageError, rootData, rootError, routeSeq, selectedCollection, submissionMap])
+  const loadingMessage = useMemo(() => {
+    if (invalidMessage) return ''
+    if (!rootData) return '正在加载收集表...'
+    if (selectedCollection && !collectionIndex) return '正在加载收集表索引...'
+    if (collectionIndex && !selectedRef) return '正在切换提交序号...'
+    if (selectedRef && !submissionData) return '正在加载提交统计...'
+    return ''
+  }, [collectionIndex, invalidMessage, rootData, selectedCollection, selectedRef, submissionData])
 
   const selectedContentList = submissionData?.提交内容列表?.length
     ? submissionData.提交内容列表
@@ -223,6 +231,11 @@ export function CollectionPage() {
             <a className="mt-4 inline-flex text-sm font-semibold text-sky-700" href={HOME_PAGE_URL}>
               返回主页
             </a>
+          </section>
+        ) : loadingMessage ? (
+          <section className="mt-6 rounded-lg border border-sky-100 bg-white p-5 text-slate-700 shadow-sm">
+            <h2 className="text-lg font-semibold">正在加载</h2>
+            <p className="mt-2 text-sm">{loadingMessage}</p>
           </section>
         ) : (
           <div className="mt-6 space-y-5">

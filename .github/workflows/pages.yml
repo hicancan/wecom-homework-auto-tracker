@@ -8,6 +8,10 @@ on:
     paths:
       - webapp/**
       - local/**
+      - scripts/**
+      - tests/**
+      - pyproject.toml
+      - uv.lock
       - .github/workflows/pages.yml
 
 permissions:
@@ -20,7 +24,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Validate Python
+        run: |
+          uv run python -m compileall -q ./local ./scripts
+          uv run pytest
+
+      - name: Install dependencies
+        working-directory: webapp
+        run: npm ci
+
+      - name: Validate webapp
+        working-directory: webapp
+        run: |
+          npm run lint
+          npm run test
+          npm run build
+
   deploy:
+    needs: validate
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -28,6 +70,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -40,53 +87,7 @@ jobs:
         uses: actions/configure-pages@v6
 
       - name: Inject deploy timestamp
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          import json
-          from datetime import datetime, timezone, timedelta
-          from pathlib import Path
-
-          now = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8)))
-          deploy_time = now.strftime("%Y-%m-%d %H:%M:%S")
-
-          index_path = Path("webapp/public/collections.json")
-          if index_path.exists():
-            index_data = json.loads(index_path.read_text(encoding="utf-8"))
-          else:
-            index_data = {"收集表列表": []}
-
-          index_data["最后部署时间"] = deploy_time
-          index_path.parent.mkdir(parents=True, exist_ok=True)
-          index_path.write_text(json.dumps(index_data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-          for item in index_data.get("收集表列表", []):
-            rel = item.get("数据文件")
-            if not rel:
-              continue
-            data_path = Path("webapp/public") / rel
-            if not data_path.exists():
-              continue
-            try:
-              course_data = json.loads(data_path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-              continue
-            course_data["最后部署时间"] = deploy_time
-            data_path.write_text(json.dumps(course_data, ensure_ascii=False, indent=2), encoding="utf-8")
-            for submission in course_data.get("提交序号列表", []):
-              submission_rel = submission.get("数据文件")
-              if not submission_rel:
-                continue
-              submission_path = Path("webapp/public") / submission_rel
-              if not submission_path.exists():
-                continue
-              try:
-                submission_data = json.loads(submission_path.read_text(encoding="utf-8"))
-              except json.JSONDecodeError:
-                continue
-              submission_data["最后部署时间"] = deploy_time
-              submission_path.write_text(json.dumps(submission_data, ensure_ascii=False, indent=2), encoding="utf-8")
-          PY
+        run: python3 local/stamp_deploy_time.py --public-root webapp/public --collection-index webapp/public/collections.json
 
       - name: Build course manifest
         run: python3 local/build_course_manifest.py --public-root webapp/public --collection-index webapp/public/collections.json

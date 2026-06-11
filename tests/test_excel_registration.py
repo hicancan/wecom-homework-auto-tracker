@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from excel_loader import load_collection_excel
-from scripts.run_extract_interactive import discover_unregistered_excels
+from registration import discover_unregistered_excels
 
 
 def write_collection_excel(path: Path, content: object) -> None:
