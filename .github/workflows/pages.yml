@@ -116,21 +116,11 @@ jobs:
           fi
           area="${EDGEONE_PAGES_AREA:-overseas}"
           echo "Deploying webapp/dist to EdgeOne Pages project '${EDGEONE_PROJECT_NAME}' in area '${area}'."
-          for attempt in 1 2 3; do
-            echo "Attempt ${attempt}/3..."
-            if npx --yes edgeone@latest pages deploy webapp/dist \
-              -n "${EDGEONE_PROJECT_NAME}" \
-              -t "${EDGEONE_API_TOKEN}" \
-              -e production \
-              -a "${area}"; then
-              echo "EdgeOne deploy succeeded on attempt ${attempt}"
-              exit 0
-            fi
-            echo "Attempt ${attempt} failed, retrying in 30s..."
-            sleep 30
-          done
-          echo "::error::EdgeOne deploy failed after 3 attempts"
-          exit 1
+          npx --yes edgeone@latest makers deploy webapp/dist \
+            -n "${EDGEONE_PROJECT_NAME}" \
+            -t "${EDGEONE_API_TOKEN}" \
+            -e production \
+            -a "${area}"
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5
