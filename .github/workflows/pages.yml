@@ -101,6 +101,7 @@ jobs:
 
       - name: Deploy to EdgeOne Pages
         if: ${{ vars.EDGEONE_PAGES_ENABLED == 'true' }}
+        continue-on-error: true
         env:
           EDGEONE_API_TOKEN: ${{ secrets.EDGEONE_API_TOKEN }}
           EDGEONE_PROJECT_NAME: ${{ vars.EDGEONE_PROJECT_NAME }}
