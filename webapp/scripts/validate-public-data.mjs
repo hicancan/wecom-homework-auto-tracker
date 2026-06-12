@@ -33,6 +33,31 @@ const root = readJson('collections.json')
 assert(Array.isArray(root.收集表列表), 'collections.json 必须包含 收集表列表')
 assert(!Object.hasOwn(root, '课程列表'), 'public 根索引不得包含旧字段 课程列表')
 
+const edgeone = readJson('edgeone.json')
+assert(Array.isArray(edgeone.headers), 'edgeone.json 必须声明 headers')
+
+function headersFor(source) {
+  const entry = edgeone.headers.find((item) => item.source === source)
+  assert(entry, `edgeone.json 缺少规则: ${source}`)
+  assert(Array.isArray(entry.headers), `edgeone.json headers 无效: ${source}`)
+  return Object.fromEntries(entry.headers.map((item) => [item.key, item.value]))
+}
+
+function assertCache(source, expected) {
+  const headers = headersFor(source)
+  assert(headers['Cache-Control'] === expected, `${source} Cache-Control 应为 ${expected}`)
+}
+
+const baseHeaders = headersFor('/*')
+assert(baseHeaders['X-Content-Type-Options'] === 'nosniff', 'edgeone.json 缺少 nosniff')
+assert(baseHeaders['X-Frame-Options'] === 'SAMEORIGIN', 'edgeone.json 缺少 X-Frame-Options')
+assert(baseHeaders['Referrer-Policy'] === 'strict-origin-when-cross-origin', 'edgeone.json 缺少 Referrer-Policy')
+assertCache('/course-manifest.json', 'no-store, max-age=0, must-revalidate')
+assertCache('/collections.json', 'no-store, max-age=0, must-revalidate')
+assertCache('/data/*.json', 'no-store, max-age=0, must-revalidate')
+assertCache('/data/*/*.json', 'no-store, max-age=0, must-revalidate')
+assertCache('/assets/*', 'public, max-age=31536000, immutable')
+
 for (const item of root.收集表列表) {
   assert(item.收集表ID, '收集表项缺少 收集表ID')
   assert(item.数据文件 === `data/${item.收集表ID}/index.json`, `收集表数据路径必须稳定: ${item.收集表ID}`)
