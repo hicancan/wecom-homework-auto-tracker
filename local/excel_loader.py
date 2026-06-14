@@ -24,8 +24,16 @@ def require_column(df: pd.DataFrame, column: str, excel_path: Path) -> str:
     return column
 
 
-def load_collection_excel(excel_path: Path) -> tuple[pd.DataFrame, dict[str, str], dict[str, str]]:
-    """Load and validate a collection Excel."""
+def load_collection_excel(
+    excel_path: Path,
+    default_content: str = "",
+) -> tuple[pd.DataFrame, dict[str, str], dict[str, str]]:
+    """Load and validate a collection Excel.
+
+    **TEMPORARY**: `default_content` fills empty 提交内容 cells for legacy
+    collection tables created before WeCom added the 提交内容 field.
+    New tables should never need this.
+    """
     meta = parse_collection_title(excel_path.stem)
     df = pd.read_excel(excel_path)
     columns = {
@@ -38,6 +46,15 @@ def load_collection_excel(excel_path: Path) -> tuple[pd.DataFrame, dict[str, str
         "user_type": require_column(df, "用户类型", excel_path),
     }
     df = df.copy()
+
+    # TEMPORARY: auto-fill empty content cells for legacy collection tables.
+    if default_content:
+        mask = (
+            df[columns["content"]].isna()
+            | (df[columns["content"]].astype(str).str.strip().isin(["", "nan"]))
+        )
+        if mask.any():
+            df.loc[mask, columns["content"]] = default_content
 
     df["_name_norm"] = df[columns["name"]].map(normalize_name)
     df["_submission_label"] = df[columns["submission"]].map(normalize_text)
