@@ -221,6 +221,10 @@ def parse_datetime_text(value: Any) -> pd.Timestamp | None:
     text = format_datetime(value) if not isinstance(value, str) else value.strip()
     if not text:
         return None
+    if " 24:" in text:
+        text = text.replace(" 24:", " 00:")
+        ts = pd.to_datetime(text, errors="coerce")
+        return ts + pd.Timedelta(days=1) if not pd.isna(ts) else None
     ts = pd.to_datetime(text, errors="coerce")
     if pd.isna(ts):
         return None
