@@ -175,7 +175,7 @@ def main() -> None:
         config_path = fallback if fallback.exists() else config_path
     cfg = load_local_config(config_path)
     collection_id, excel_path, configured_meta = pick_excel(args, repo_root, cfg)
-    df, _, _ = load_collection_excel(excel_path)
+    df, _, _ = load_collection_excel(excel_path, configured_meta.get("default_content", ""))
     labels = sorted(dict.fromkeys(df["_submission_label"].tolist()), key=sort_submission_key)
     if args.list_submission_labels:
         print(f">>> {collection_id} | {configured_meta['标题']}")
