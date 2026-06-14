@@ -18,7 +18,6 @@ class CollectionConfig:
     title: str
     excel: Path
     status: str
-    default_content: str = ""
 
 
 @dataclass(frozen=True)
@@ -97,14 +96,13 @@ def discover_collections(repo_root: Path, cfg: dict) -> list[CollectionConfig]:
                 title=title,
                 excel=excel,
                 status=normalize_text(item.get("status")) or "active",
-                default_content=normalize_text(item.get("default_content")) or "",
             )
         )
     return sorted(items, key=lambda item: item.collection_id)
 
 
-def discover_labels(excel_path: Path, default_content: str = "") -> tuple[dict[str, list[str]], pd.DataFrame]:
-    df, _, _ = load_collection_excel(excel_path, default_content)
+def discover_labels(excel_path: Path) -> tuple[dict[str, list[str]], pd.DataFrame]:
+    df, _, _ = load_collection_excel(excel_path)
     return labels_from_loaded_df(df), df
 
 
@@ -262,7 +260,7 @@ def choose_items(repo_root: Path, collections: list[CollectionConfig]) -> list[P
     plan: list[PlanItem] = []
     for collection_idx in collection_indices:
         item = collections[collection_idx - 1]
-        labels_map, labels_df = discover_labels(item.excel, item.default_content)
+        labels_map, labels_df = discover_labels(item.excel)
         labels = list(labels_map.keys())
         print(f"\n选择提交序号: {item.collection_id} | {item.title}")
         for idx, label in enumerate(labels, 1):

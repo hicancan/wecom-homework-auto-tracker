@@ -14,6 +14,9 @@ if not exist "%RUNNER_PY%" (
 
 where uv >nul 2>nul
 if %ERRORLEVEL%==0 (
+  echo [TOOLS] Patching legacy Excel files...
+  uv run python "%SCRIPT_DIR%..\tools\fix_legacy_excel.py"
+  echo.
   uv run python "%RUNNER_PY%" %*
   goto :after_run
 )
@@ -30,6 +33,9 @@ if not exist "%PYTHON_EXE%" (
   )
 )
 
+echo [TOOLS] Patching legacy Excel files...
+"%PYTHON_EXE%" "%SCRIPT_DIR%..\tools\fix_legacy_excel.py"
+echo.
 "%PYTHON_EXE%" "%RUNNER_PY%" %*
 
 :after_run
