@@ -248,7 +248,6 @@ def process_collection(
             desktop = Path.home() / "Desktop" / f"{meta['主题']}_{label}_{len(stats)}提交.zip"
             shutil.copy2(zip_path, desktop)
             print(f"  [ZIP→桌面] {desktop.name}")
-        )
 
     archive_counts = count_archive_status(manifest)
     print(
