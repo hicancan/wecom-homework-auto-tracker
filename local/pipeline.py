@@ -120,6 +120,7 @@ def process_collection(
     cleanup_mode: str,
     cleanup_only: bool,
     skip_unknown: bool,
+    zip_to_desktop: bool,
     publish_mode: str,
     makeup_window_start: pd.Timestamp | None,
     makeup_window_end: pd.Timestamp | None,
@@ -233,17 +234,20 @@ def process_collection(
         )
         stats[label] = stat
         write_submission_reports(collection_out_dir, label, stat)
-        zip_paths.append(
-            str(
-                create_submission_zip(
-                    collection_out_dir,
-                    label,
-                    manifest,
-                    cutoff,
-                    label_makeup_start if publish_mode == "makeup-window" else None,
-                    makeup_window_end if publish_mode == "makeup-window" else None,
-                )
-            )
+        zip_path = create_submission_zip(
+            collection_out_dir,
+            label,
+            manifest,
+            cutoff,
+            label_makeup_start if publish_mode == "makeup-window" else None,
+            makeup_window_end if publish_mode == "makeup-window" else None,
+        )
+        zip_paths.append(str(zip_path))
+        if zip_to_desktop:
+            import shutil
+            desktop = Path.home() / "Desktop" / f"{meta['主题']}_{label}_{len(stats)}提交.zip"
+            shutil.copy2(zip_path, desktop)
+            print(f"  [ZIP→桌面] {desktop.name}")
         )
 
     archive_counts = count_archive_status(manifest)

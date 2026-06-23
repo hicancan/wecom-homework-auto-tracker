@@ -154,6 +154,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--cleanup-only", action="store_true", help="仅执行源文件清理，不更新归档和 web 数据")
     parser.add_argument("--skip-unknown", action="store_true", help="跳过不在名单中的填写人，不触发 fail-fast")
+    parser.add_argument("--zip-to-desktop", action="store_true", help="将生成的 ZIP 文件复制到桌面")
     parser.add_argument(
         "--publish-mode",
         choices=["cutoff", "makeup-window"],
@@ -198,6 +199,7 @@ def main() -> None:
         cleanup_mode=args.cleanup_source_attachments,
         cleanup_only=args.cleanup_only,
         skip_unknown=args.skip_unknown,
+        zip_to_desktop=args.zip_to_desktop,
         publish_mode=args.publish_mode,
         makeup_window_start=parse_cli_datetime(args.makeup_window_start, "--makeup-window-start"),
         makeup_window_end=parse_cli_datetime(args.makeup_window_end, "--makeup-window-end"),
