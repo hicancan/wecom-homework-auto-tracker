@@ -231,6 +231,7 @@ def process_collection(
             publish_mode=publish_mode,
             makeup_window_start=label_makeup_start if publish_mode == "makeup-window" else None,
             makeup_window_end=makeup_window_end if publish_mode == "makeup-window" else None,
+            hide_not_submitted=configured_meta.get("hide_not_submitted", False),
         )
         stats[label] = stat
         write_submission_reports(collection_out_dir, label, stat)

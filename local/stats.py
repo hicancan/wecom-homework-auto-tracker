@@ -121,6 +121,7 @@ def make_submission_stat(
     publish_mode: str = "cutoff",
     makeup_window_start: pd.Timestamp | None = None,
     makeup_window_end: pd.Timestamp | None = None,
+    hide_not_submitted: bool = False,
 ) -> dict[str, Any]:
     allow_makeup = is_makeup_window_mode(publish_mode)
     if allow_makeup:
@@ -157,6 +158,7 @@ def make_submission_stat(
         "最后收集记录时间": latest_record_time,
         "统计生成时间": now_text(),
         "总班级数": len(students_by_class),
+        "隐藏未提交": hide_not_submitted,
         "班级统计": {},
         "补交状态": {},
     }
