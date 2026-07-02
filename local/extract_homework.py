@@ -43,6 +43,8 @@ def collection_registry(cfg: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "classes": item.get("classes", []),
             "excel": str(item.get("excel", "")).strip(),
             "default_content": str(item.get("default_content", "")).strip(),
+            "students": str(item.get("students", "")).strip(),
+            "other_students": str(item.get("other_students", "")).strip(),
         }
     return registry
 

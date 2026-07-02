@@ -143,8 +143,11 @@ def process_collection(
     if unknown:
         raise ValueError(f"提交序号不存在: {', '.join(unknown)}")
 
-    students_path = resolve_path(cfg.get("students", "config/B240401_to_B240403_students.json"), repo_root)
-    other_text = str(cfg.get("other_students", "")).strip()
+    students_path = resolve_path(
+        configured_meta.get("students") or cfg.get("students", "config/B240401_to_B240403_students.json"),
+        repo_root,
+    )
+    other_text = str(configured_meta.get("other_students") or cfg.get("other_students", "")).strip()
     other_path = resolve_path(other_text, repo_root) if other_text else Path()
     students_by_class_all, students_by_name, other_students_by_name = load_students(
         students_json_path=students_path,
