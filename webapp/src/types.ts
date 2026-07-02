@@ -98,7 +98,6 @@ export type SubmissionStat = {
   允许补交?: boolean
   补交窗口开始时间?: string
   补交窗口结束时间?: string
-  隐藏未提交?: boolean
   后缀无效?: IssueSummary
   其他已提交名单?: string[]
   其他后缀无效名单?: string[]

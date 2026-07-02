@@ -39,8 +39,8 @@ function buildClassRecords(stat: ClassStat, allowMakeup: boolean): StudentRecord
   return records.sort((a, b) => a.studentNo.localeCompare(b.studentNo))
 }
 
-export function ClassStatusCard({ className, stat, allowMakeup, hideNotSubmitted }: { className: string; stat: ClassStat; allowMakeup: boolean; hideNotSubmitted?: boolean }) {
-  const records = buildClassRecords(stat, allowMakeup).filter(r => !hideNotSubmitted || r.label !== '未提交')
+export function ClassStatusCard({ className, stat, allowMakeup }: { className: string; stat: ClassStat; allowMakeup: boolean }) {
+  const records = buildClassRecords(stat, allowMakeup)
   const segments = buildStatusSegments(
     stat.应交人数,
     stat.已提交人数,

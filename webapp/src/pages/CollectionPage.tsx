@@ -172,7 +172,6 @@ export function CollectionPage() {
   }, [submissionData])
   const summary = submissionData?.汇总
   const allowMakeup = submissionData?.允许补交 === true
-  const hideNotSubmitted = submissionData?.隐藏未提交 === true
   const expected = summary?.应交总人数 || 0
   const submitted = summary?.已提交总人数 || 0
   const late = allowMakeup ? summary?.已补交总人数 || 0 : 0
@@ -240,7 +239,7 @@ export function CollectionPage() {
 
             <section className="grid gap-4 xl:grid-cols-2">
               {classEntries.map(([className, stat]) => (
-                <ClassStatusCard key={className} className={className} stat={stat} allowMakeup={allowMakeup} hideNotSubmitted={hideNotSubmitted} />
+                <ClassStatusCard key={className} className={className} stat={stat} allowMakeup={allowMakeup} />
               ))}
               <OtherStatusCard
                 submitted={submissionData?.其他已提交名单 || []}
